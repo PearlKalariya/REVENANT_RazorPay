@@ -1,0 +1,23 @@
+# REVENANT local stack.
+# No Redis by decision D5 — Postgres carries the queue and idempotency.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: revive
+      POSTGRES_PASSWORD: revive
+      POSTGRES_DB: revive
+    ports:
+      - "5433:5432"          # 5433 on host to avoid clashing with a local pg
+    volumes:
+      - revive_pgdata:/var/lib/postgresql/data
+      # Postgres applies this on first init (D12). No migration tool.
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U revive -d revive"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  revive_pgdata:
