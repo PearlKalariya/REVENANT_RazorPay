@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, Header, Request, Response, status
+from fastapi import APIRouter, Depends, Header, Request, Response, status
 
 from . import db
 from .config import get_settings
@@ -22,8 +22,15 @@ from .integrations.ingest import (
     ingest_webhook,
 )
 from .integrations.webhook import compute_signature
+from .security import require_api_key, require_local_dev
 
 router = APIRouter()
+
+#: Razorpay webhook payloads are a few KB. Anything far larger is abuse, not a
+#: webhook. `await request.body()` buffers the whole request in memory, so an
+#: unbounded POST to this PUBLIC, UNAUTHENTICATED endpoint is a trivial
+#: memory-exhaustion vector. Cap before reading.
+MAX_WEBHOOK_BYTES = 256 * 1024
 
 
 @router.post("/webhooks/razorpay")
@@ -41,7 +48,18 @@ async def razorpay_webhook(
     signature: that is not a delivery problem, and we do want it visible in
     Razorpay's dashboard.
     """
+    # Reject oversized bodies on the declared length before buffering.
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > MAX_WEBHOOK_BYTES:
+        response.status_code = status.HTTP_413_REQUEST_ENTITY_TOO_LARGE
+        return {"status": "rejected", "reason": "payload_too_large"}
+
     raw_body = await request.body()
+    if len(raw_body) > MAX_WEBHOOK_BYTES:
+        # Covers chunked transfers, which carry no content-length.
+        response.status_code = status.HTTP_413_REQUEST_ENTITY_TOO_LARGE
+        return {"status": "rejected", "reason": "payload_too_large"}
+
     settings = get_settings()
 
     async with db.pool().acquire() as conn:
@@ -73,19 +91,23 @@ async def razorpay_webhook(
     }
 
 
-@router.post("/dev/replay-webhook")
+@router.post(
+    "/dev/replay-webhook",
+    dependencies=[Depends(require_local_dev), Depends(require_api_key)],
+)
 async def replay_webhook(request: Request, response: Response):
     """Dev-only: replay a webhook payload through the REAL handler.
 
-    This does NOT bypass signature verification. It signs the payload with the
-    configured webhook secret and the result is verified exactly like a genuine
-    delivery (decision D3). There is one ingest path, not two.
+    This does NOT bypass signature verification for a genuine delivery: it
+    signs the payload with the configured webhook secret and the result is
+    verified exactly like a real one (decision D3). There is one ingest path.
+
+    But because it self-signs, reaching this endpoint IS equivalent to knowing
+    the webhook secret. It is therefore loopback-only AND API-key protected,
+    and events it creates are tagged source='replay' so the Outcome Engine can
+    exclude them from any figure presented as real recovered revenue.
     """
     settings = get_settings()
-    if not settings.enable_dev_endpoints:
-        response.status_code = status.HTTP_404_NOT_FOUND
-        return {"detail": "Not Found"}
-
     body = await request.json()
     payload = body.get("payload")
     event_id = body.get("event_id")

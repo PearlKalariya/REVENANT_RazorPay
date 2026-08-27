@@ -23,7 +23,7 @@ from langgraph.prebuilt import create_react_agent
 from pydantic import BaseModel, Field
 
 from ..config import Settings
-from .llm import build_model, invoke_with_validation, resolve_model_name
+from .llm import build_model, invoke_with_validation, model_chain, resolve_model_name
 from .tools import build_tools
 
 log = logging.getLogger(__name__)
@@ -99,13 +99,14 @@ class InvestigationResult(BaseModel):
 
 
 def build_investigation_agent(
-    pool: asyncpg.Pool, merchant_id: str, settings: Settings
+    pool: asyncpg.Pool, merchant_id: str, settings: Settings,
+    model_name: str | None = None,
 ):
     """Construct the agent graph. Raises LLMUnavailable if unconfigured."""
     return create_react_agent(
         # temperature 0: investigation must be reproducible. Sampling variety
         # is not a virtue when the output feeds a financial pipeline.
-        build_model(settings, temperature=0.0),
+        build_model(settings, temperature=0.0, model_name=model_name),
         tools=build_tools(pool, merchant_id),
         prompt=SYSTEM_PROMPT,
         response_format=InvestigationResult,
@@ -116,11 +117,15 @@ async def investigate(
     pool: asyncpg.Pool, merchant_id: str, incident_id: int, settings: Settings
 ) -> tuple[InvestigationResult, int]:
     """Investigate one incident. Returns (result, tool_calls_made)."""
-    agent = build_investigation_agent(pool, merchant_id, settings)
+    # Passed as a factory so a daily-quota exhaustion can rebuild against the
+    # next model instead of ending the run.
+    def factory(model_name):
+        return build_investigation_agent(pool, merchant_id, settings, model_name)
+
     # Validation is mandatory and retried. A malformed response raises rather
     # than propagating a half-parsed object into recovery logic.
     result, state = await invoke_with_validation(
-        agent,
+        factory,
         [
             {
                 "role": "user",
@@ -129,6 +134,7 @@ async def investigate(
             }
         ],
         InvestigationResult,
+        models=model_chain(settings),
     )
     tool_calls = sum(
         len(getattr(m, "tool_calls", []) or []) for m in state["messages"]

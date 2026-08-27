@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from . import db
+from .agents.llm import resolve_model_name
 from .config import get_settings
 from .routes_webhooks import router as webhooks_router
 
@@ -22,11 +23,17 @@ async def lifespan(app: FastAPI):
     await db.disconnect()
 
 
+_settings = get_settings()
+
 app = FastAPI(
     title="REVENANT",
     description="Autonomous revenue recovery agent. Razorpay test mode only.",
     version="0.1.0",
     lifespan=lifespan,
+    # Not advertised publicly: the schema would disclose the dev surface.
+    docs_url="/docs" if _settings.enable_api_docs else None,
+    redoc_url="/redoc" if _settings.enable_api_docs else None,
+    openapi_url="/openapi.json" if _settings.enable_api_docs else None,
 )
 
 
@@ -57,6 +64,14 @@ async def health_deep() -> dict:
             "mode": settings.razorpay_mode,
             "configured": settings.razorpay_configured,
         },
-        "llm": {"provider": "anthropic", "configured": bool(settings.anthropic_api_key)},
+        # Reports the ACTIVE provider. This hardcoded "anthropic" after the
+        # D4 revision to Gemini, so health reported a provider the system was
+        # not using — exactly the kind of false-green a health check exists to
+        # prevent.
+        "llm": {
+            "provider": settings.llm_provider,
+            "model": resolve_model_name(settings),
+            "configured": settings.llm_configured,
+        },
         "dev_endpoints": settings.enable_dev_endpoints,
     }

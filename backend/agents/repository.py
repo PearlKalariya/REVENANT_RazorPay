@@ -73,3 +73,46 @@ async def persist_investigation(
             ),
         )
     return investigation_id
+
+
+async def load_latest_investigation(
+    conn: asyncpg.Connection, incident_id: int
+) -> tuple[InvestigationResult, str] | None:
+    """Return the most recent stored investigation for an incident, if any.
+
+    Re-investigating an incident that has already been investigated burns
+    scarce free-tier quota (20 requests per model per day; one investigation
+    costs roughly six) and produces the same answer, since the agent runs at
+    temperature 0 over unchanged data.
+
+    Returns (result, model) or None.
+    """
+    row = await conn.fetchrow(
+        """
+        SELECT root_cause, confidence, evidence, model
+          FROM investigations
+         WHERE incident_id = $1
+         ORDER BY id DESC LIMIT 1
+        """,
+        incident_id,
+    )
+    if row is None:
+        return None
+
+    extra = row["evidence"]
+    if isinstance(extra, str):
+        extra = json.loads(extra)
+    extra = extra or {}
+
+    return (
+        InvestigationResult(
+            root_cause=row["root_cause"],
+            confidence=row["confidence"],
+            evidence=extra.get("evidence", []),
+            affected_method=extra.get("affected_method"),
+            dominant_failure_reason=extra.get("dominant_failure_reason"),
+            is_transient=bool(extra.get("is_transient", False)),
+            recommended_focus=extra.get("recommended_focus", ""),
+        ),
+        row["model"],
+    )

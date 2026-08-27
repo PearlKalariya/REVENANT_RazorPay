@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -35,7 +36,19 @@ class Settings(BaseSettings):
     llm_model: str = ""                   # blank = provider default
 
     # Gates the Failure Lab and webhook replay endpoints.
-    enable_dev_endpoints: bool = True
+    # Defaults to FALSE. This previously defaulted to True and the app was
+    # exploited through a public tunnel as a result: an unauthenticated caller
+    # injected a forged "payment succeeded" event. Dev surface is now opt-in
+    # AND loopback-only (see backend/security.py).
+    enable_dev_endpoints: bool = False
+
+    #: Shared secret for mutating endpoints (decision D9). No default:
+    #: an unset key fails closed rather than allowing everyone.
+    api_key: str = ""
+
+    #: Expose /docs, /redoc and /openapi.json. Off by default so the API
+    #: surface — including dev routes — is not advertised publicly.
+    enable_api_docs: bool = False
 
     @property
     def llm_api_key(self) -> str:
@@ -58,15 +71,25 @@ class Settings(BaseSettings):
         """Live mode is out of scope and must never be reachable by accident."""
         return self.razorpay_mode.lower() == "live"
 
+    @model_validator(mode="after")
+    def _refuse_live_mode(self):
+        """Refuse live mode at CONSTRUCTION, not at first access.
+
+        This check previously lived in get_settings(), which meant any code
+        path building Settings() directly slipped past it. A financial guard
+        that depends on callers using the right factory is not a guard.
+        """
+        if self.is_live_mode:
+            raise ValueError(
+                "RAZORPAY_MODE=live is refused. REVENANT is a test-mode-only "
+                "system. Enabling live mode requires explicit human "
+                "authorization and a recorded decision in docs/DECISIONS.md."
+            )
+        return self
+
 
 @lru_cache
 def get_settings() -> Settings:
-    settings = Settings()
-    # Hard stop. Live mode requires explicit human authorization (spec §6).
-    if settings.is_live_mode:
-        raise RuntimeError(
-            "RAZORPAY_MODE=live is refused. REVENANT is a test-mode-only system. "
-            "Enabling live mode requires explicit human authorization and a "
-            "recorded decision in docs/DECISIONS.md."
-        )
-    return settings
+    # The live-mode refusal is enforced by Settings itself (see
+    # _refuse_live_mode), so it holds no matter how Settings is constructed.
+    return Settings()
