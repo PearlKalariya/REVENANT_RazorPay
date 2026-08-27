@@ -1,0 +1,148 @@
+"""Investigation Agent.
+
+Answers one question: **why is revenue being lost?**
+
+It reads. It does not act. It holds no tool that can move money, approve
+anything, or reach Razorpay — see `tools.py`, where that boundary is
+structural rather than a matter of prompt wording. A prompt injection in a
+failure_reason field can at worst make it reason badly; it cannot make it pay
+anyone, because no such capability is in the graph.
+
+Output is a typed object, never prose. Everything downstream — the Recovery
+Agent, and eventually the Policy Engine — reads fields, not sentences. A model
+that rambles produces a validation error, not an unpredictable financial
+action.
+"""
+
+from __future__ import annotations
+
+import logging
+
+import asyncpg
+from langchain_anthropic import ChatAnthropic
+from langgraph.prebuilt import create_react_agent
+from pydantic import BaseModel, Field
+
+from ..config import Settings
+from .tools import build_tools
+
+log = logging.getLogger(__name__)
+
+MODEL = "claude-sonnet-5"
+
+SYSTEM_PROMPT = """\
+You are the Investigation Agent for REVENANT, a revenue recovery system for \
+Indian merchants using Razorpay.
+
+Your job is to determine WHY revenue is being lost in a given incident. You \
+investigate. You do not decide what to do about it, and you have no ability to \
+act — another component handles recovery, and a deterministic policy engine \
+decides what is permitted.
+
+Method:
+1. Start with get_incident_details to see what was detected.
+2. Use get_merchant_baseline to establish what normal looks like.
+3. Use get_failure_statistics to see whether the problem is confined to one \
+payment method or one time window.
+4. Use get_related_payments to inspect the actual failures and their reasons.
+5. Only sample individual payments or customers if it would change your \
+conclusion.
+
+Rules:
+- Ground every claim in tool output. If the data does not support a cause, say \
+so and give a lower confidence rather than inventing a plausible story.
+- Distinguish correlation from cause. A spike confined to one method during \
+one window suggests an infrastructure problem with that method; failures \
+spread evenly across methods and time suggests something else entirely.
+- Never invent payment ids, amounts, error codes, or rates. Every figure must \
+come from a tool result.
+- Do not speculate about Razorpay's internal systems beyond what the failure \
+codes actually say.
+- Be concise. A merchant reads this, not an engineer.
+"""
+
+
+class InvestigationResult(BaseModel):
+    """Structured finding. The Recovery Agent consumes these fields."""
+
+    root_cause: str = Field(
+        description="One or two sentences naming the most likely cause, grounded "
+        "in the data. Plain language for a merchant."
+    )
+    confidence: float = Field(
+        ge=0.0, le=1.0,
+        description="0-1. Use below 0.5 when the evidence is ambiguous. Do not "
+        "inflate this to sound authoritative.",
+    )
+    affected_method: str | None = Field(
+        default=None,
+        description="Payment method most affected (upi/card/netbanking), or null "
+        "if the problem is not method-specific.",
+    )
+    dominant_failure_reason: str | None = Field(
+        default=None, description="Most common failure reason, verbatim from the data."
+    )
+    evidence: list[str] = Field(
+        default_factory=list,
+        description="Specific figures supporting the conclusion, each traceable "
+        "to a tool result. E.g. 'UPI failure rate 83.3% vs 2.0% baseline'.",
+    )
+    is_transient: bool = Field(
+        description="True if this looks like a temporary condition (timeout, "
+        "gateway outage) where retrying may succeed. False if it looks "
+        "structural (declined cards, insufficient funds) where a retry of the "
+        "same payment would fail again. This materially affects whether "
+        "recovery is worth attempting.",
+    )
+    recommended_focus: str = Field(
+        description="Which subset of failures is most worth recovering, and why. "
+        "A recommendation about focus only — NOT an action, NOT an amount.",
+    )
+
+
+def build_investigation_agent(
+    pool: asyncpg.Pool, merchant_id: str, settings: Settings
+):
+    """Construct the agent graph. Raises if no API key is configured."""
+    if not settings.anthropic_api_key:
+        raise RuntimeError("ANTHROPIC_API_KEY is not configured.")
+
+    model = ChatAnthropic(
+        model=MODEL,
+        api_key=settings.anthropic_api_key,
+        temperature=0,          # investigation should be reproducible
+        max_tokens=4096,
+    )
+    return create_react_agent(
+        model,
+        tools=build_tools(pool, merchant_id),
+        prompt=SYSTEM_PROMPT,
+        response_format=InvestigationResult,
+    )
+
+
+async def investigate(
+    pool: asyncpg.Pool, merchant_id: str, incident_id: int, settings: Settings
+) -> tuple[InvestigationResult, int]:
+    """Investigate one incident. Returns (result, tool_calls_made)."""
+    agent = build_investigation_agent(pool, merchant_id, settings)
+    state = await agent.ainvoke(
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": f"Investigate revenue incident {incident_id}. "
+                    "Determine the root cause.",
+                }
+            ]
+        }
+    )
+    tool_calls = sum(
+        len(getattr(m, "tool_calls", []) or []) for m in state["messages"]
+    )
+    result = state["structured_response"]
+    log.info(
+        "investigation.complete incident=%s confidence=%.2f tools=%d",
+        incident_id, result.confidence, tool_calls,
+    )
+    return result, tool_calls

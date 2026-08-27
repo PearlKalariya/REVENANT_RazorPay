@@ -1,0 +1,20 @@
+# REVENANT backend. Python 3.13.
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+asyncpg==0.30.0
+pydantic==2.10.5
+pydantic-settings==2.7.1
+python-dotenv==1.0.1
+httpx==0.28.1
+
+# Razorpay test-mode integration (Phase 2)
+razorpay==2.0.1
+
+# Dev / test
+pytest==8.3.4
+pytest-asyncio==0.25.2
+
+# razorpay 2.0.1 still imports pkg_resources at runtime, which is not present
+# by default on Python 3.12+. Declared explicitly so the install is deterministic
+# rather than relying on it being pulled in as a side effect.
+setuptools>=75.0.0
