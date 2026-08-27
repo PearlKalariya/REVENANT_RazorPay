@@ -32,7 +32,13 @@ from pydantic import BaseModel, Field
 
 from ..config import Settings
 from .investigation import InvestigationResult
-from .llm import build_model, invoke_with_validation, model_chain, resolve_model_name
+from .llm import (
+    build_model,
+    invoke_structured,
+    make_submit_tool,
+    model_chain,
+    resolve_model_name,
+)
 from .tools import build_tools
 
 log = logging.getLogger(__name__)
@@ -69,6 +75,9 @@ customers who cannot pay.
 
 Use the tools to ground your reasoning. Check the merchant baseline and the \
 actual failure reasons before deciding. Never invent figures.
+
+When you have decided, call `submit_findings` exactly once with your strategy. \
+That call is how you deliver your proposal — nothing else is recorded.
 """
 
 
@@ -120,9 +129,11 @@ def build_recovery_agent(pool: asyncpg.Pool, merchant_id: str, settings: Setting
                          model_name: str | None = None):
     return create_react_agent(
         build_model(settings, temperature=0.0, model_name=model_name),
-        tools=build_tools(pool, merchant_id),   # same READ-ONLY toolset
+        # Same READ-ONLY toolset, plus the terminal submission tool. Note that
+        # submit_findings carries no execution capability — it records a
+        # proposal, which the Policy Engine then rules on.
+        tools=[*build_tools(pool, merchant_id), make_submit_tool(RecoveryStrategy)],
         prompt=SYSTEM_PROMPT,
-        response_format=RecoveryStrategy,
     )
 
 
@@ -149,7 +160,7 @@ async def propose_strategy(
         "deciding which are worth recovering."
     )
 
-    strategy, state = await invoke_with_validation(
+    strategy, state = await invoke_structured(
         factory, [{"role": "user", "content": brief}], RecoveryStrategy,
         models=model_chain(settings),
     )

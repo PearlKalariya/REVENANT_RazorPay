@@ -285,13 +285,40 @@ def test_pinned_model_disables_fallback():
 
 
 def test_fallback_chain_excludes_incompatible_models():
-    """A fallback that fails differently is not a fallback.
-
-    lite models reject LangChain's structured-output prefill; the "latest"
-    alias returned empty content. Both must stay out of the chain.
-    """
+    """lite models reject LangChain's structured-output prefill outright, so
+    they cannot run this agent no matter the token budget."""
     from backend.agents.llm import FALLBACK_MODELS
 
     for model in FALLBACK_MODELS["google"]:
         assert "lite" not in model, f"{model} cannot run the agent flow"
-        assert "latest" not in model, f"{model} is a moving alias"
+
+
+def test_output_budget_accommodates_thinking_models():
+    """gemini-3.x flash models spend output tokens on internal reasoning and
+    return EMPTY content if the budget is small — which looks like a broken
+    model but is just an insufficient cap."""
+    from backend.agents.llm import MAX_OUTPUT_TOKENS
+    assert MAX_OUTPUT_TOKENS >= 4096
+
+
+def test_model_unavailable_triggers_fallback():
+    """Model availability varies by project — one key listed gemini-2.5-flash
+    and another 404'd on it. That must move to the next model, not fail."""
+    from backend.agents.llm import is_model_unavailable
+
+    assert is_model_unavailable(Exception("404 NOT_FOUND model not found"))
+    assert not is_model_unavailable(Exception("429 RESOURCE_EXHAUSTED"))
+    assert not is_model_unavailable(Exception("500 internal"))
+
+
+def test_provider_overload_is_recognised():
+    """A 503 is neither our bug nor a quota problem — the model is busy.
+    Retrying briefly then falling through keeps a live demo alive."""
+    from backend.agents.llm import is_transient_server_error
+
+    assert is_transient_server_error(
+        Exception("503 UNAVAILABLE. This model is currently experiencing high demand.")
+    )
+    assert is_transient_server_error(Exception("500 INTERNAL"))
+    assert not is_transient_server_error(Exception("429 RESOURCE_EXHAUSTED"))
+    assert not is_transient_server_error(Exception("400 INVALID_ARGUMENT"))

@@ -23,7 +23,13 @@ from langgraph.prebuilt import create_react_agent
 from pydantic import BaseModel, Field
 
 from ..config import Settings
-from .llm import build_model, invoke_with_validation, model_chain, resolve_model_name
+from .llm import (
+    build_model,
+    invoke_structured,
+    make_submit_tool,
+    model_chain,
+    resolve_model_name,
+)
 from .tools import build_tools
 
 log = logging.getLogger(__name__)
@@ -45,6 +51,9 @@ payment method or one time window.
 4. Use get_related_payments to inspect the actual failures and their reasons.
 5. Only sample individual payments or customers if it would change your \
 conclusion.
+6. When you have enough evidence, call `submit_findings` exactly once with \
+your conclusion. That call is how you deliver your answer — nothing else is \
+recorded.
 
 Rules:
 - Ground every claim in tool output. If the data does not support a cause, say \
@@ -107,9 +116,10 @@ def build_investigation_agent(
         # temperature 0: investigation must be reproducible. Sampling variety
         # is not a virtue when the output feeds a financial pipeline.
         build_model(settings, temperature=0.0, model_name=model_name),
-        tools=build_tools(pool, merchant_id),
+        # Structured output arrives via a tool call, not prefill — several
+        # Gemini models reject prefill outright. See llm.py.
+        tools=[*build_tools(pool, merchant_id), make_submit_tool(InvestigationResult)],
         prompt=SYSTEM_PROMPT,
-        response_format=InvestigationResult,
     )
 
 
@@ -124,7 +134,7 @@ async def investigate(
 
     # Validation is mandatory and retried. A malformed response raises rather
     # than propagating a half-parsed object into recovery logic.
-    result, state = await invoke_with_validation(
+    result, state = await invoke_structured(
         factory,
         [
             {
