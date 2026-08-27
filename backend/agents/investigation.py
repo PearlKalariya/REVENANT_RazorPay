@@ -19,16 +19,14 @@ from __future__ import annotations
 import logging
 
 import asyncpg
-from langchain_anthropic import ChatAnthropic
 from langgraph.prebuilt import create_react_agent
 from pydantic import BaseModel, Field
 
 from ..config import Settings
+from .llm import build_model, invoke_with_validation, resolve_model_name
 from .tools import build_tools
 
 log = logging.getLogger(__name__)
-
-MODEL = "claude-sonnet-5"
 
 SYSTEM_PROMPT = """\
 You are the Investigation Agent for REVENANT, a revenue recovery system for \
@@ -103,18 +101,11 @@ class InvestigationResult(BaseModel):
 def build_investigation_agent(
     pool: asyncpg.Pool, merchant_id: str, settings: Settings
 ):
-    """Construct the agent graph. Raises if no API key is configured."""
-    if not settings.anthropic_api_key:
-        raise RuntimeError("ANTHROPIC_API_KEY is not configured.")
-
-    model = ChatAnthropic(
-        model=MODEL,
-        api_key=settings.anthropic_api_key,
-        temperature=0,          # investigation should be reproducible
-        max_tokens=4096,
-    )
+    """Construct the agent graph. Raises LLMUnavailable if unconfigured."""
     return create_react_agent(
-        model,
+        # temperature 0: investigation must be reproducible. Sampling variety
+        # is not a virtue when the output feeds a financial pipeline.
+        build_model(settings, temperature=0.0),
         tools=build_tools(pool, merchant_id),
         prompt=SYSTEM_PROMPT,
         response_format=InvestigationResult,
@@ -126,23 +117,24 @@ async def investigate(
 ) -> tuple[InvestigationResult, int]:
     """Investigate one incident. Returns (result, tool_calls_made)."""
     agent = build_investigation_agent(pool, merchant_id, settings)
-    state = await agent.ainvoke(
-        {
-            "messages": [
-                {
-                    "role": "user",
-                    "content": f"Investigate revenue incident {incident_id}. "
-                    "Determine the root cause.",
-                }
-            ]
-        }
+    # Validation is mandatory and retried. A malformed response raises rather
+    # than propagating a half-parsed object into recovery logic.
+    result, state = await invoke_with_validation(
+        agent,
+        [
+            {
+                "role": "user",
+                "content": f"Investigate revenue incident {incident_id}. "
+                "Determine the root cause.",
+            }
+        ],
+        InvestigationResult,
     )
     tool_calls = sum(
         len(getattr(m, "tool_calls", []) or []) for m in state["messages"]
     )
-    result = state["structured_response"]
     log.info(
-        "investigation.complete incident=%s confidence=%.2f tools=%d",
-        incident_id, result.confidence, tool_calls,
+        "investigation.complete incident=%s model=%s confidence=%.2f tools=%d",
+        incident_id, resolve_model_name(settings), result.confidence, tool_calls,
     )
     return result, tool_calls

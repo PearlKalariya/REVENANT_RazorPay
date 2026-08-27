@@ -153,8 +153,14 @@ def build_tools(pool: asyncpg.Pool, merchant_id: str) -> list[StructuredTool]:
         )
 
     async def get_merchant_baseline() -> str:
-        """Overall volume and failure rate per method across the whole period.
-        Use as the 'normal' to compare a suspected spike against."""
+        """Overall volume and failure rate per method across the WHOLE period,
+        INCLUDING any incident windows.
+
+        Important: this is NOT the same figure as the detector's baseline. The
+        detector excludes anomalous windows, so its baseline is lower and is the
+        correct 'normal' to compare a spike against. Use this tool for overall
+        volume and method mix. When quoting a baseline failure rate, quote the
+        detector's."""
         async with pool.acquire() as conn:
             rows = await conn.fetch(
                 """
@@ -174,7 +180,7 @@ def build_tools(pool: asyncpg.Pool, merchant_id: str) -> list[StructuredTool]:
                     "method": r["method"],
                     "total_payments": _int(r["total"]),
                     "failed": _int(r["failed"]),
-                    "overall_failure_rate": round(r["failed"] / r["total"], 4),
+                    "failure_rate_including_incidents": round(r["failed"] / r["total"], 4),
                     "volume": _rupees(r["volume_paise"]),
                 }
                 for r in rows

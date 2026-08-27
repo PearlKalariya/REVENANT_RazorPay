@@ -75,50 +75,72 @@ async def check_razorpay(s) -> bool:
     return False
 
 
-async def check_anthropic(s) -> bool:
-    if not s.anthropic_api_key:
-        print(f"  {SKIP}  Anthropic — ANTHROPIC_API_KEY not set")
+async def check_llm(s) -> bool:
+    """Verify the configured LLM provider can actually run inference.
+
+    An auth-only check is not enough: a key can authenticate against a model
+    listing yet fail on the first real completion (no credits, no quota). So
+    we spend one token and find out at setup time.
+    """
+    provider = s.llm_provider
+    if not s.llm_configured:
+        key_name = "GOOGLE_API_KEY" if provider == "google" else "ANTHROPIC_API_KEY"
+        print(f"  {SKIP}  LLM ({provider}) — {key_name} not set")
+        if provider == "google":
+            print( "         Free key, no card: aistudio.google.com/apikey")
         return False
 
-    # A models-list call only proves the key authenticates. It returns 200 on
-    # an account with zero credits, which then fails on the first real
-    # inference. So we spend one token instead and find out now.
-    async with httpx.AsyncClient(timeout=30) as client:
+    from .agents.llm import resolve_model_name
+    model = resolve_model_name(s)
+
+    if provider == "google":
+        url = (
+            f"https://generativelanguage.googleapis.com/v1beta/models/"
+            f"{model}:generateContent"
+        )
+        headers = {"x-goog-api-key": s.google_api_key,
+                   "content-type": "application/json"}
+        body = {"contents": [{"parts": [{"text": "hi"}]}],
+                "generationConfig": {"maxOutputTokens": 1}}
+    else:
+        url = "https://api.anthropic.com/v1/messages"
+        headers = {"x-api-key": s.anthropic_api_key,
+                   "anthropic-version": "2023-06-01",
+                   "content-type": "application/json"}
+        body = {"model": model, "max_tokens": 1,
+                "messages": [{"role": "user", "content": "hi"}]}
+
+    async with httpx.AsyncClient(timeout=40) as client:
         try:
-            r = await client.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={
-                    "x-api-key": s.anthropic_api_key,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json",
-                },
-                json={
-                    "model": "claude-sonnet-5",
-                    "max_tokens": 1,
-                    "messages": [{"role": "user", "content": "hi"}],
-                },
-            )
+            r = await client.post(url, headers=headers, json=body)
         except httpx.HTTPError as e:
-            print(f"  {BAD}  Anthropic — network error: {type(e).__name__}")
+            print(f"  {BAD}  LLM ({provider}) — network error: {type(e).__name__}")
             return False
 
     if r.status_code == 200:
-        print(f"  {OK}  Anthropic — inference OK (real completion returned)")
+        print(f"  {OK}  LLM ({provider}) — inference OK on {model}")
         return True
 
     detail = ""
     try:
-        detail = r.json().get("error", {}).get("message", "")
+        err = r.json().get("error", {})
+        detail = err.get("message", "") if isinstance(err, dict) else str(err)
     except Exception:
         detail = r.text[:160]
 
-    if r.status_code == 401:
-        print(f"  {BAD}  Anthropic — 401 Unauthorized. Key is wrong or revoked.")
-    elif "credit balance" in detail.lower():
-        print(f"  {BAD}  Anthropic — key is VALID but the account has no credits.")
-        print( "         Add credits at console.anthropic.com -> Plans & Billing.")
+    low = detail.lower()
+    if r.status_code in (401, 403):
+        print(f"  {BAD}  LLM ({provider}) — {r.status_code}. Key wrong, revoked, "
+              "or API not enabled for this project.")
+    elif "credit balance" in low:
+        print(f"  {BAD}  LLM ({provider}) — key VALID but account has no credits.")
+    elif r.status_code == 429 or "quota" in low:
+        print(f"  {BAD}  LLM ({provider}) — rate limited / quota exhausted.")
+    elif r.status_code == 404:
+        print(f"  {BAD}  LLM ({provider}) — model {model!r} not found. "
+              "Set LLM_MODEL to a model your key can access.")
     else:
-        print(f"  {BAD}  Anthropic — HTTP {r.status_code}: {detail}")
+        print(f"  {BAD}  LLM ({provider}) — HTTP {r.status_code}: {detail[:120]}")
     return False
 
 
@@ -142,6 +164,8 @@ async def main() -> None:
     print(f"  RAZORPAY_KEY_ID         {_masked(s.razorpay_key_id, public=True)}")
     print(f"  RAZORPAY_KEY_SECRET     {_masked(s.razorpay_key_secret)}")
     print(f"  RAZORPAY_WEBHOOK_SECRET {_masked(s.razorpay_webhook_secret)}")
+    print(f"  LLM_PROVIDER            {s.llm_provider}")
+    print(f"  GOOGLE_API_KEY          {_masked(s.google_api_key)}")
     print(f"  ANTHROPIC_API_KEY       {_masked(s.anthropic_api_key)}")
     print(f"  RAZORPAY_MODE           {s.razorpay_mode}")
     print("  " + "-" * 56)
@@ -149,7 +173,7 @@ async def main() -> None:
     results = [
         await check_razorpay(s),
         check_webhook_secret(s),
-        await check_anthropic(s),
+        await check_llm(s),
     ]
     print("  " + "-" * 56)
     print(f"  {sum(results)}/3 ready\n")

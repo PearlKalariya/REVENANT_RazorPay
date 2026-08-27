@@ -28,10 +28,26 @@ class Settings(BaseSettings):
     razorpay_webhook_secret: str = ""
     razorpay_mode: str = "test"
 
+    # LLM provider. See docs/DECISIONS.md D4 (revised).
+    llm_provider: str = "google"          # google | anthropic
     anthropic_api_key: str = ""
+    google_api_key: str = ""
+    llm_model: str = ""                   # blank = provider default
 
     # Gates the Failure Lab and webhook replay endpoints.
     enable_dev_endpoints: bool = True
+
+    @property
+    def llm_api_key(self) -> str:
+        return (
+            self.google_api_key
+            if self.llm_provider == "google"
+            else self.anthropic_api_key
+        )
+
+    @property
+    def llm_configured(self) -> bool:
+        return bool(self.llm_api_key)
 
     @property
     def razorpay_configured(self) -> bool:

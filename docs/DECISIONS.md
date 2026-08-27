@@ -133,3 +133,34 @@ feature doing the job.
 recreating. Acceptable ONLY because all data is synthetic and regenerable.
 This would be the wrong call with real data.
 **Status:** AGENT DECISION — pending human override · **Date:** 2026-08-27
+
+---
+
+## D4 (REVISED) — LLM provider
+**Supersedes the original D4 (Anthropic).**
+**Question:** Anthropic requires paid credits. Which provider now?
+**Options:** A) add Anthropic credits · B) Gemini free tier · C) Groq · D) local Ollama
+**Chosen:** **B — Google Gemini free tier.**
+**Reason:** Human declined to add credits. Gemini's free tier handles this
+workload with no card. Groq and Ollama were advised against: the Investigation
+Agent chains 4-6 tool calls and reasons over real figures, which is exactly
+where smaller models degrade, and a hallucinated failure rate in a financial
+demo is the worst available failure mode.
+**Status:** APPROVED · **Approved by:** Human · **Date:** 2026-08-27
+
+**Quality mitigations**, since the human explicitly did not want to compromise
+on quality — free-tier models are less consistent at schema-valid structured
+output, so this is handled rather than hoped away (`backend/agents/llm.py`):
+* Structured output validation is MANDATORY; malformed responses raise instead
+  of propagating a half-parsed object into recovery logic.
+* Up to 3 retries on schema failure, feeding the validation error back to the
+  model. Most schema misses self-correct when shown what was wrong.
+* Exponential backoff on 429 / quota errors, so a free-tier throttle costs
+  seconds rather than the demo run.
+* Fails closed. An incident with no investigation is a visible gap; one with a
+  hallucinated investigation is a silent one.
+
+**Provider remains swappable** via `LLM_PROVIDER`. Adding Anthropic credits
+later is a one-line env change, not a refactor. The tools, capability-boundary
+tests, structured output contract, and the "policy overrides the agent"
+guarantee are all provider-independent.

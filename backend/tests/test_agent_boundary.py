@@ -127,7 +127,7 @@ async def test_baseline_returns_per_method_rates(pool):
     out = json.loads(await tools["get_merchant_baseline"].coroutine())
     assert isinstance(out, list) and out
     for row in out:
-        assert 0.0 <= row["overall_failure_rate"] <= 1.0
+        assert 0.0 <= row["failure_rate_including_incidents"] <= 1.0
 
 
 async def test_customer_history_surfaces_opt_out(pool):
