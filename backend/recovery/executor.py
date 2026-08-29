@@ -541,3 +541,114 @@ async def _record_execution_decision(conn, action_id: int, decision) -> None:
         decision.policy_version, decision.policy_hash,
         json.dumps(decision.metadata or {}), decision.evaluated_at,
     )
+
+
+async def resolve_pending_execution(
+    conn: asyncpg.Connection,
+    client: RazorpayClient,
+    *,
+    execution_id: int,
+) -> ExecutionResult:
+    """Resolve one execution left `pending` by a timeout or a rate limit.
+
+    A pending execution is the genuinely ambiguous case: we claimed the budget
+    and called Razorpay, and we do not know whether the call landed. Both
+    possible answers are dangerous if guessed — marking it failed risks a
+    duplicate charge on retry, marking it succeeded fabricates revenue.
+
+    So we ask Razorpay, using the SAME reference_id. Two outcomes, both safe:
+
+    * Razorpay rejects it as a duplicate reference_id -> the link already
+      exists, so the original call DID land. Fetch and record it.
+    * Razorpay creates it -> the original call did not land, and this is the
+      first and only link.
+
+    Either way exactly one payment link exists per execution, because the
+    reference_id is the idempotency key and Razorpay enforces uniqueness on it.
+    """
+    row = await conn.fetchrow(
+        """
+        SELECT er.id, er.action_id, er.idempotency_key, er.amount_paise,
+               er.status::text AS status, ra.payment_id, ra.customer_id,
+               c.email, c.phone, p.merchant_id
+          FROM execution_records er
+          JOIN recovery_actions ra ON ra.id = er.action_id
+          JOIN customers c ON c.id = ra.customer_id
+          JOIN payments p ON p.id = ra.payment_id
+         WHERE er.id = $1
+        """,
+        execution_id,
+    )
+    if row is None:
+        raise ExecutionRefused("execution_not_found", f"No execution {execution_id}.")
+    if row["status"] != "pending":
+        return ExecutionResult(
+            action_id=row["action_id"], execution_id=execution_id,
+            status=row["status"], idempotency_key=row["idempotency_key"],
+            reused=True,
+        )
+
+    key = row["idempotency_key"]
+    try:
+        link = await client.create_payment_link(
+            amount_paise=int(row["amount_paise"]),
+            reference_id=key,
+            description=f"Recovery for payment {row['payment_id']}",
+            customer_email=row["email"],
+            customer_contact=row["phone"],
+        )
+        ref, short_url = link.id, link.short_url
+    except RazorpayError as e:
+        if "already exists" in str(e):
+            # The original call DID land. The link exists; find it rather than
+            # creating a second one.
+            found = await client.find_payment_link_by_reference(key)
+            if found is None:
+                # Razorpay says it exists but will not show it. Leave pending:
+                # inventing an outcome here would either fabricate revenue or
+                # invite a duplicate charge.
+                log.warning("executor.pending_unresolved execution=%s", execution_id)
+                return ExecutionResult(
+                    action_id=row["action_id"], execution_id=execution_id,
+                    status="pending", idempotency_key=key,
+                    error="duplicate reported but link not retrievable",
+                )
+            ref, short_url = found["id"], found["short_url"]
+        elif e.retryable:
+            return ExecutionResult(
+                action_id=row["action_id"], execution_id=execution_id,
+                status="pending", idempotency_key=key, error=str(e))
+        else:
+            await _complete(conn, execution_id, row["action_id"], "failed",
+                            error=str(e))
+            return ExecutionResult(
+                action_id=row["action_id"], execution_id=execution_id,
+                status="failed", idempotency_key=key, error=str(e))
+
+    await conn.execute(
+        """
+        UPDATE execution_records
+           SET status='succeeded', razorpay_ref=$2, razorpay_short_url=$3,
+               executed_at=now(), attempts=attempts+1
+         WHERE id=$1
+        """,
+        execution_id, ref, short_url,
+    )
+    await _mark(conn, row["action_id"], "executed")
+    await conn.execute(
+        """
+        INSERT INTO audit_events
+            (actor, event_type, merchant_id, customer_id, payment_id,
+             action_id, execution_id, amount_paise, reason)
+        VALUES ('EXECUTOR','PENDING_RESOLVED',$1,$2,$3,$4,$5,$6,$7)
+        """,
+        row["merchant_id"], row["customer_id"], row["payment_id"],
+        row["action_id"], execution_id, int(row["amount_paise"]),
+        f"razorpay_ref={ref}",
+    )
+    log.info("executor.pending_resolved execution=%s ref=%s", execution_id, ref)
+    return ExecutionResult(
+        action_id=row["action_id"], execution_id=execution_id,
+        status="succeeded", idempotency_key=key, razorpay_ref=ref,
+        short_url=short_url,
+    )

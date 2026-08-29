@@ -38,7 +38,24 @@ SUCCESS_EVENTS = frozenset({"payment_link.paid", "payment.captured"})
 #: Events that close a recovery attempt without money.
 FAILURE_EVENTS = frozenset({"payment_link.expired", "payment.failed"})
 
-#: Only this source may contribute to recovered revenue. See rule 1.
+#: Sources that may contribute to recovered revenue.
+#:
+#: Trust comes from PROVENANCE, not from the presence of a signature:
+#:
+#:   "razorpay"      pushed by Razorpay, proven by an HMAC we cannot forge
+#:   "razorpay_api"  pulled from Razorpay over an authenticated TLS call,
+#:                   which is equally authoritative — it IS Razorpay's answer
+#:
+#:   "replay"        signed with OUR OWN secret, so it proves nothing about
+#:                   whether a customer paid. Never counted.
+#:
+#: Reconciliation exists because webhooks must never be assumed to arrive.
+#: Five real payments were made and confirmed by Razorpay while zero webhooks
+#: reached this system (a stale URL in the dashboard). A recovery system whose
+#: revenue figure depends on webhook delivery reports zero on a bad day.
+TRUSTED_SOURCES = frozenset({"razorpay", "razorpay_api"})
+
+#: Kept for readability at call sites that push webhooks.
 TRUSTED_SOURCE = "razorpay"
 
 
@@ -79,7 +96,7 @@ async def record_outcome(
     succeeded = event_type in SUCCESS_EVENTS
 
     # Rule 1. Recorded and linked, but never counted.
-    if source != TRUSTED_SOURCE:
+    if source not in TRUSTED_SOURCES:
         log.warning(
             "outcome.untrusted_source event=%s source=%s execution=%s — "
             "linked but NOT counted as recovered revenue",

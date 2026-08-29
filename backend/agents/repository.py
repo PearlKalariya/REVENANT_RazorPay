@@ -116,3 +116,74 @@ async def load_latest_investigation(
         ),
         row["model"],
     )
+
+
+async def persist_strategy(
+    conn: asyncpg.Connection,
+    *,
+    incident_id: int,
+    merchant_id: str,
+    strategy,
+    model: str,
+    tool_calls: int,
+) -> None:
+    """Record the Recovery Agent's proposal in the audit ledger.
+
+    The proposal is an auditable decision in its own right — "the agent
+    suggested this, policy then ruled on it" — so the ledger is the correct
+    home for it rather than a side table.
+
+    It doubles as a cache: re-running the pipeline reuses the stored proposal
+    instead of spending scarce free-tier quota to regenerate the same answer at
+    temperature 0 over unchanged data.
+    """
+    await conn.execute(
+        """
+        INSERT INTO audit_events
+            (actor, event_type, merchant_id, incident_id, reason, metadata)
+        VALUES ('RECOVERY_AGENT', 'RECOVERY_STRATEGY_PROPOSED', $1, $2, $3, $4)
+        """,
+        merchant_id, incident_id, strategy.rationale,
+        json.dumps({
+            "action_type": strategy.normalized_action,
+            "target_method": strategy.target_method,
+            "target_failure_reasons": strategy.target_failure_reasons,
+            "excluded_failure_reasons": strategy.excluded_failure_reasons,
+            "expected_recovery_rate": strategy.expected_recovery_rate,
+            "confidence": strategy.confidence,
+            "model": model,
+            "tool_calls": tool_calls,
+        }),
+    )
+
+
+async def load_latest_strategy(conn: asyncpg.Connection, incident_id: int):
+    """Most recent stored strategy for an incident, or None."""
+    from .recovery import RecoveryStrategy
+
+    row = await conn.fetchrow(
+        """
+        SELECT reason, metadata FROM audit_events
+         WHERE incident_id = $1 AND event_type = 'RECOVERY_STRATEGY_PROPOSED'
+         ORDER BY id DESC LIMIT 1
+        """,
+        incident_id,
+    )
+    if row is None:
+        return None
+    meta = row["metadata"]
+    if isinstance(meta, str):
+        meta = json.loads(meta)
+    meta = meta or {}
+    return (
+        RecoveryStrategy(
+            action_type=meta.get("action_type", "CREATE_PAYMENT_LINK"),
+            target_method=meta.get("target_method"),
+            target_failure_reasons=meta.get("target_failure_reasons", []),
+            excluded_failure_reasons=meta.get("excluded_failure_reasons", []),
+            rationale=row["reason"] or "",
+            expected_recovery_rate=float(meta.get("expected_recovery_rate", 0.0)),
+            confidence=float(meta.get("confidence", 0.0)),
+        ),
+        meta.get("model", "unknown"),
+    )

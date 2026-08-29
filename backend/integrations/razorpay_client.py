@@ -98,13 +98,22 @@ class RazorpayClient:
                 status=r.status_code,
                 retryable=True,
             )
+        if r.status_code == 429:
+            # A rate limit is NOT a bad request. Classifying it with the other
+            # 4xx errors marked 15 executions permanently `failed` in a batch
+            # run when Razorpay was only asking us to slow down — money that
+            # never moved, recorded as a failed recovery.
+            raise RazorpayError(
+                "Razorpay rate limit (429). Slow down and retry.",
+                status=429, retryable=True,
+            )
         if r.status_code >= 400:
             detail = ""
             try:
                 detail = r.json().get("error", {}).get("description", "")
             except Exception:
                 detail = r.text[:200]
-            # 4xx is our fault. Retrying sends the same bad request again.
+            # Other 4xx are our fault: retrying sends the same bad request.
             raise RazorpayError(
                 f"Razorpay rejected request ({r.status_code}): {detail}",
                 status=r.status_code,
@@ -178,6 +187,18 @@ class RazorpayClient:
             amount_paise=data["amount"],
             reference_id=data.get("reference_id", reference_id),
         )
+
+    async def find_payment_link_by_reference(self, reference_id: str) -> dict | None:
+        """Find a payment link by its reference_id.
+
+        Used to resolve a pending execution: Razorpay refusing a duplicate
+        reference_id proves the original call landed, and this recovers the
+        link it created rather than guessing at the outcome.
+        """
+        data = await self._request(
+            "GET", "/payment_links", params={"reference_id": reference_id})
+        items = data.get("payment_links") or []
+        return items[0] if items else None
 
     async def fetch_payment_link(self, link_id: str) -> dict:
         """Read back a link. Used to verify state from the authoritative

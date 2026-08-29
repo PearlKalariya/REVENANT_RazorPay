@@ -322,3 +322,19 @@ def test_provider_overload_is_recognised():
     assert is_transient_server_error(Exception("500 INTERNAL"))
     assert not is_transient_server_error(Exception("429 RESOURCE_EXHAUSTED"))
     assert not is_transient_server_error(Exception("400 INVALID_ARGUMENT"))
+
+
+def test_each_model_gets_its_own_retry_budget():
+    """Falling back must not consume the retry budget of the next model.
+
+    A flat loop conflated the two, so with four models and five attempts the
+    later models never got a fair try and the run reported the FIRST model's
+    error after exhausting attempts on it.
+    """
+    import inspect
+
+    from backend.agents import llm
+
+    src = inspect.getsource(llm._invoke_with_backoff)
+    assert "for model_idx, model_name in enumerate(chain)" in src
+    assert src.count("for ") >= 2, "fallback and retry must be separate loops"

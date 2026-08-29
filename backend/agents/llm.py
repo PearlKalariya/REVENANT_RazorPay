@@ -277,78 +277,91 @@ async def invoke_with_validation(
 async def _invoke_with_backoff(
     agent_or_factory, messages: list[dict], *, models: list[str] | None = None
 ) -> dict:
-    """Invoke, handling per-minute rate limits and daily quota exhaustion.
+    """Invoke, handling rate limits, daily quota exhaustion and provider overload.
 
-    Per-minute limit -> wait it out (the provider tells us how long).
-    Daily quota      -> waiting is pointless; move to the next model, which
-                        has its own separate quota.
+    Two NESTED loops, deliberately:
+
+      for each model in the chain:
+          retry that model a few times for transient conditions
+
+    A flat loop conflated the two — falling back to a new model consumed one of
+    the shared retry attempts, so with four models and five attempts the later
+    models never got a fair try, and the run died reporting the FIRST model's
+    error. Each model now gets its own retry budget.
+
+    Per-minute rate limit -> wait it out; the provider states how long.
+    Daily quota exhausted -> waiting is pointless, move to the next model.
+    Provider overload     -> brief retry, then move on.
     """
     callable_factory = callable(agent_or_factory) and not hasattr(
         agent_or_factory, "ainvoke"
     )
     chain = list(models or [None]) if callable_factory else [None]
-    model_idx = 0
-
-    def current_agent():
-        if callable_factory:
-            return agent_or_factory(chain[model_idx])
-        return agent_or_factory
-
-    delay = 2.0
     last: Exception | None = None
 
-    for attempt in range(1, MAX_RATELIMIT_RETRIES + 1):
-        try:
-            return await current_agent().ainvoke({"messages": messages})
-        except Exception as e:  # noqa: BLE001 - provider SDKs raise varied types
-            last = e
+    for model_idx, model_name in enumerate(chain):
+        agent = (agent_or_factory(model_name) if callable_factory
+                 else agent_or_factory)
+        has_next = model_idx + 1 < len(chain)
+        delay = 2.0
 
-            unusable = is_quota_exhausted(e) or is_model_unavailable(e)
-            if unusable and callable_factory and model_idx + 1 < len(chain):
-                reason = ("daily_quota_exhausted" if is_quota_exhausted(e)
-                          else "model_unavailable")
-                model_idx += 1
-                log.warning("llm.%s falling back to %s", reason, chain[model_idx])
-                delay = 2.0
-                continue
+        for attempt in range(1, MAX_RATELIMIT_RETRIES + 1):
+            try:
+                return await agent.ainvoke({"messages": messages})
+            except Exception as e:  # noqa: BLE001 - provider SDKs raise varied types
+                last = e
+                label = model_name or "model"
 
-            # Provider overload: retry this model briefly, then move on rather
-            # than spending the whole retry budget on a busy model.
-            if is_transient_server_error(e):
-                if attempt <= 2:
-                    log.warning(
-                        "llm.provider_unavailable retrying %s in 5s (attempt %d)",
-                        chain[model_idx] or "model", attempt,
-                    )
-                    await asyncio.sleep(5.0)
-                    continue
-                if callable_factory and model_idx + 1 < len(chain):
-                    model_idx += 1
-                    log.warning(
-                        "llm.provider_unavailable falling back to %s",
-                        chain[model_idx],
-                    )
-                    continue
-                raise
+                # Nothing to wait for: this model is done for the day, or this
+                # key cannot call it at all.
+                if is_quota_exhausted(e) or is_model_unavailable(e):
+                    reason = ("daily_quota_exhausted" if is_quota_exhausted(e)
+                              else "model_unavailable")
+                    if has_next:
+                        log.warning("llm.%s model=%s -> next model", reason, label)
+                        break
+                    raise
 
-            if not _is_rate_limit(e) or attempt == MAX_RATELIMIT_RETRIES:
-                raise
+                # Provider-side overload or a slow model: a couple of quick
+                # retries, then hand over rather than burning the whole budget.
+                if is_transient_server_error(e) or isinstance(
+                        e, (asyncio.TimeoutError, TimeoutError)):
+                    if attempt <= 2:
+                        log.warning("llm.provider_unavailable model=%s retry in 5s",
+                                    label)
+                        await asyncio.sleep(5.0)
+                        continue
+                    if has_next:
+                        log.warning("llm.provider_unavailable model=%s -> next model",
+                                    label)
+                        break
+                    raise
 
-            # Prefer the provider's own instruction over our guess. Pad it
-            # slightly: quota windows are not perfectly aligned with our clock.
-            asked = _retry_after_seconds(e)
-            wait = min(asked + 1.5, MAX_BACKOFF_SECONDS) if asked else min(
-                delay, MAX_BACKOFF_SECONDS
-            )
-            log.warning(
-                "llm.rate_limited attempt=%d/%d waiting %.1fs (%s)",
-                attempt, MAX_RATELIMIT_RETRIES, wait,
-                "provider-specified" if asked else "exponential",
-            )
-            await asyncio.sleep(wait)
-            delay = min(delay * 2, MAX_BACKOFF_SECONDS)
+                if not _is_rate_limit(e):
+                    raise
 
-    raise LLMUnavailable(f"Rate limited after {MAX_RATELIMIT_RETRIES} attempts: {last}")
+                if attempt == MAX_RATELIMIT_RETRIES:
+                    if has_next:
+                        log.warning("llm.rate_limited model=%s exhausted retries"
+                                    " -> next model", label)
+                        break
+                    raise
+
+                asked = _retry_after_seconds(e)
+                wait = min(asked + 1.5, MAX_BACKOFF_SECONDS) if asked else min(
+                    delay, MAX_BACKOFF_SECONDS)
+                log.warning(
+                    "llm.rate_limited model=%s attempt=%d/%d waiting %.1fs (%s)",
+                    label, attempt, MAX_RATELIMIT_RETRIES, wait,
+                    "provider-specified" if asked else "exponential",
+                )
+                await asyncio.sleep(wait)
+                delay = min(delay * 2, MAX_BACKOFF_SECONDS)
+
+    raise LLMUnavailable(
+        f"Every model in the chain failed ({', '.join(str(m) for m in chain)}). "
+        f"Last error: {last}"
+    )
 
 
 # ---------------------------------------------------------------------------

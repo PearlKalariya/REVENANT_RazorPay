@@ -13,6 +13,7 @@ from fastapi import FastAPI
 from . import db
 from .agents.llm import resolve_model_name
 from .config import get_settings
+from .routes_api import router as api_router
 from .routes_webhooks import router as webhooks_router
 
 
@@ -38,6 +39,7 @@ app = FastAPI(
 
 
 app.include_router(webhooks_router)
+app.include_router(api_router)
 
 
 @app.get("/health")

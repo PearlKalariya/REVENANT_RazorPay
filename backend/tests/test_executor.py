@@ -445,3 +445,18 @@ async def test_daily_window_follows_the_merchants_timezone(conn):
 def test_business_timezone_defaults_to_india():
     from backend.policy import PolicyConfig
     assert PolicyConfig().business_timezone == "Asia/Kolkata"
+
+
+async def test_razorpay_rate_limit_is_retryable_not_failed(conn):
+    """429 is Razorpay asking us to slow down, not a bad request.
+
+    Classifying it with the other 4xx marked 15 executions permanently `failed`
+    in a batch run — money that never moved, recorded as failed recoveries.
+    """
+    from backend.integrations.razorpay_client import RazorpayError
+
+    aid = await _fixture(conn)
+    client = FakeRazorpay(fail=RazorpayError("rate limited", status=429,
+                                             retryable=True))
+    result, _ = await _run(conn, aid, client)
+    assert result.status == "pending", "a throttled call must not be marked failed"
