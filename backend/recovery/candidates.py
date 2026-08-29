@@ -135,7 +135,10 @@ async def build_plan(
     now: datetime | None = None,
 ) -> RecoveryPlan:
     """Expand a strategy into policy-evaluated candidates."""
-    config = config or PolicyConfig()
+    # Merchant-owned limits, not a global default.
+    if config is None:
+        from ..policy import load_merchant_config
+        config = (await load_merchant_config(conn, merchant_id)).policy
     now = now or datetime.now(timezone.utc)
 
     try:
@@ -165,18 +168,12 @@ async def build_plan(
         merchant_id,
     )
 
-    recovered_today = int(
-        await conn.fetchval(
-            """
-            SELECT coalesce(sum(er.amount_paise), 0)
-              FROM execution_records er
-             WHERE er.status = 'succeeded'
-               AND er.created_at >= date_trunc('day', $1::timestamptz)
-            """,
-            now,
-        )
-        or 0
-    )
+    # Shared with the executor. Two different definitions of "spent today" is
+    # how a cap gets breached while both sides believe they are within it.
+    from .executor import daily_committed_paise
+
+    recovered_today = await daily_committed_paise(
+        conn, now, config.business_timezone)
 
     candidates: list[RecoveryCandidate] = []
     running_total = recovered_today

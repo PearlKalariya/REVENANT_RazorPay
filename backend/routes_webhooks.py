@@ -22,6 +22,7 @@ from .integrations.ingest import (
     ingest_webhook,
 )
 from .integrations.webhook import compute_signature
+from .recovery.outcome import record_outcome
 from .security import require_api_key, require_local_dev
 
 router = APIRouter()
@@ -31,6 +32,26 @@ router = APIRouter()
 #: unbounded POST to this PUBLIC, UNAUTHENTICATED endpoint is a trivial
 #: memory-exhaustion vector. Cap before reading.
 MAX_WEBHOOK_BYTES = 256 * 1024
+
+
+async def _apply_outcome(conn, result: str, event, event_id: str, source: str):
+    """Attribute an accepted event to a recovery, if it belongs to one.
+
+    Runs for both the real and replay paths so they cannot diverge. The
+    Outcome Engine itself decides whether the event may COUNT as recovered
+    revenue — a replay is linked but never counted.
+    """
+    if result != ACCEPTED or event is None:
+        return None
+    return await record_outcome(
+        conn,
+        event_id=event_id,
+        event_type=event.event_type,
+        reference_id=event.reference_id,
+        payment_link_id=event.payment_link_id,
+        amount_paise=event.amount_paise,
+        source=source,
+    )
 
 
 @router.post("/webhooks/razorpay")
@@ -62,6 +83,7 @@ async def razorpay_webhook(
 
     settings = get_settings()
 
+    outcome = None
     async with db.pool().acquire() as conn:
         result, event = await ingest_webhook(
             conn,
@@ -70,6 +92,8 @@ async def razorpay_webhook(
             event_id=x_razorpay_event_id,
             secret=settings.razorpay_webhook_secret,
         )
+        outcome = await _apply_outcome(
+            conn, result, event, x_razorpay_event_id or "", "razorpay")
 
     if result == INVALID_SIGNATURE:
         response.status_code = status.HTTP_401_UNAUTHORIZED
@@ -88,6 +112,13 @@ async def razorpay_webhook(
         "deduplicated": result == DUPLICATE,
         "actionable": result == ACCEPTED,
         "ignored": result == IGNORED,
+        "recovery": None if outcome is None else {
+            "matched": outcome.matched,
+            "execution_id": outcome.execution_id,
+            "recovered_paise": outcome.recovered_paise,
+            "counted": outcome.counted,
+            "reason": outcome.reason,
+        },
     }
 
 
@@ -118,6 +149,7 @@ async def replay_webhook(request: Request, response: Response):
     raw = json.dumps(payload).encode()
     signature = compute_signature(raw, settings.razorpay_webhook_secret)
 
+    outcome = None
     async with db.pool().acquire() as conn:
         result, event = await ingest_webhook(
             conn,
@@ -127,6 +159,7 @@ async def replay_webhook(request: Request, response: Response):
             secret=settings.razorpay_webhook_secret,
             source="replay",
         )
+        outcome = await _apply_outcome(conn, result, event, event_id, "replay")
 
     return {
         "status": "ok",
@@ -134,4 +167,12 @@ async def replay_webhook(request: Request, response: Response):
         "event_type": event.event_type if event else None,
         "deduplicated": result == DUPLICATE,
         "signature_verified": True,
+        "recovery": None if outcome is None else {
+            "matched": outcome.matched,
+            "execution_id": outcome.execution_id,
+            # Always 0 for a replay: it cannot prove a customer paid.
+            "recovered_paise": outcome.recovered_paise,
+            "counted": outcome.counted,
+            "reason": outcome.reason,
+        },
     }

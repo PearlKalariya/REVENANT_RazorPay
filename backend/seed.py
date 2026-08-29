@@ -16,6 +16,7 @@ Run:  python -m backend.seed
 from __future__ import annotations
 
 import asyncio
+import json
 import random
 from datetime import datetime, timedelta, timezone
 
@@ -163,7 +164,16 @@ async def seed() -> dict:
                 "INSERT INTO merchants (id, name, policy_config) VALUES ($1,$2,$3)",
                 MERCHANT_ID,
                 MERCHANT_NAME,
-                "{}",
+                # Explicit per-merchant configuration. Stored, not hardcoded:
+                # limits, currency and the business day belong to the merchant.
+                json.dumps({
+                    "currency": "INR",
+                    "business_timezone": "Asia/Kolkata",
+                    "max_auto_amount_paise": 500_000,      # ₹5,000
+                    "max_daily_recovery_paise": 2_500_000, # ₹25,000
+                    "max_retry_attempts": 2,
+                    "retry_cooldown_minutes": 30,
+                }),
             )
             await conn.executemany(
                 "INSERT INTO customers (id, merchant_id, email, phone, opted_out)"

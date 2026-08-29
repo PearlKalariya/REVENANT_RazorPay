@@ -21,8 +21,11 @@ Money is integer paise everywhere (decision D8). Never floats.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+import hashlib
+import json
+from dataclasses import dataclass, field, fields
+from datetime import UTC, date, datetime, time, timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from enum import Enum
 
 POLICY_VERSION = "v1"
@@ -65,6 +68,21 @@ class PolicyConfig:
     """Merchant recovery policy. Frozen: a decision is evaluated against exactly
     one config, and the version is stamped onto the result for audit."""
 
+    #: ISO-4217 currency this merchant settles in. Amounts are always stored
+    #: in the currency's MINOR unit (paise, cents, pence) as integers — the
+    #: field names say `paise` for historical reasons but the unit is whatever
+    #: minor unit `currency` implies.
+    currency: str = "INR"
+
+    #: Timezone the merchant's "day" is measured in.
+    #:
+    #: There is no correct global default here, which is exactly why it belongs
+    #: to the merchant. A UTC day rolls over at 05:30 IST, 19:00 the previous
+    #: day in New York, and 01:00 in London — so a UTC-based daily cap resets in
+    #: the middle of somebody's business day no matter which default is chosen.
+    #: The LIMIT is the merchant's; so is the day it applies to.
+    business_timezone: str = "Asia/Kolkata"
+
     max_auto_amount_paise: int = 500_000  # ₹5,000
     max_daily_recovery_paise: int = 2_500_000  # ₹25,000
     max_retry_attempts: int = 2
@@ -103,19 +121,86 @@ class RecoveryContext:
     last_attempt_at: datetime | None = None
 
 
+def policy_hash(config: "PolicyConfig") -> str:
+    """Stable fingerprint of a complete policy snapshot.
+
+    A version string alone is not enough provenance. Versions get reused,
+    migrated, or renamed, and "v3" in a year's time may not describe the same
+    rules it described today. The hash pins the ACTUAL values an evaluation ran
+    against, so an auditor can prove two evaluations used identical policy even
+    if the representation changed underneath.
+
+    Computed over sorted field names, so adding a field changes the hash (it is
+    a different policy) but reordering the dataclass does not.
+    """
+    payload = json.dumps(
+        {f.name: getattr(config, f.name) for f in fields(config)},
+        sort_keys=True, separators=(",", ":"), default=str,
+    )
+    return hashlib.sha256(payload.encode()).hexdigest()[:32]
+
+
+class EvaluationPhase(str, Enum):
+    """When an evaluation happened.
+
+    AUTHORIZATION and EXECUTION are two separate facts about an action and must
+    never overwrite each other: one records why it was allowed to be planned,
+    the other why money did or did not move.
+    """
+
+    AUTHORIZATION = "authorization"
+    EXECUTION = "execution"
+
+
 @dataclass(frozen=True)
 class PolicyDecision:
     decision: Decision
     rule: str
     reason: str
     policy_version: str
+    #: Fingerprint of the exact policy snapshot this decision was made against.
+    policy_hash: str
     evaluated_at: datetime
+    phase: EvaluationPhase = EvaluationPhase.AUTHORIZATION
     metadata: dict = field(default_factory=dict)
 
     @property
     def is_executable(self) -> bool:
         """True only if the executor may act without further human input."""
         return self.decision is Decision.AUTO_APPROVED
+
+
+def current_merchant_day(now: datetime, timezone_name: str) -> date:
+    """The merchant's current business date.
+
+    Not the UTC date. A merchant's daily limit resets at midnight where they
+    trade, not at midnight UTC — those are different instants everywhere except
+    a narrow band of longitudes.
+
+    Pure and deterministic: `now` is supplied by the caller, never read from a
+    clock inside the policy layer.
+    """
+    try:
+        tz = ZoneInfo(timezone_name)
+    except (ZoneInfoNotFoundError, ValueError):
+        # Fail LOUD rather than silently falling back to UTC. A silent fallback
+        # would move the day boundary for a merchant without anyone noticing,
+        # and the symptom would be an over-spent daily cap weeks later.
+        raise ValueError(
+            f"Unknown business_timezone {timezone_name!r}. "
+            "Use an IANA name such as 'Asia/Kolkata' or 'America/New_York'."
+        ) from None
+    return now.astimezone(tz).date()
+
+
+def merchant_day_start(now: datetime, timezone_name: str) -> datetime:
+    """The instant the merchant's current business day began, as an aware UTC
+    datetime. This is the lower bound for "spent today"."""
+    tz = ZoneInfo(timezone_name)          # validated by current_merchant_day
+    local_midnight = datetime.combine(
+        current_merchant_day(now, timezone_name), time.min, tzinfo=tz
+    )
+    return local_midnight.astimezone(UTC)
 
 
 def _rupees(paise: int) -> str:
@@ -127,6 +212,7 @@ def evaluate(
     action: ProposedAction,
     context: RecoveryContext,
     config: PolicyConfig | None = None,
+    phase: EvaluationPhase = EvaluationPhase.AUTHORIZATION,
 ) -> PolicyDecision:
     """Evaluate a proposed action against merchant policy.
 
@@ -138,13 +224,17 @@ def evaluate(
     config = config or PolicyConfig()
     now = context.now
 
+    snapshot = policy_hash(config)
+
     def decide(decision: Decision, rule: str, reason: str, **meta) -> PolicyDecision:
         return PolicyDecision(
             decision=decision,
             rule=rule,
             reason=reason,
             policy_version=config.version,
+            policy_hash=snapshot,
             evaluated_at=now,
+            phase=phase,
             metadata=meta,
         )
 

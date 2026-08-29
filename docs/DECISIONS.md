@@ -164,3 +164,126 @@ output, so this is handled rather than hoped away (`backend/agents/llm.py`):
 later is a one-line env change, not a refactor. The tools, capability-boundary
 tests, structured output contract, and the "policy overrides the agent"
 guarantee are all provider-independent.
+
+---
+
+## D13 — Policy is re-evaluated at EXECUTION time, not only at planning time
+**Found by:** auditing, then reproducing. 22 actions approved across a day
+totalled ₹38,893 against a ₹25,000 daily cap, and **all 22 executed**. Nothing
+re-checked the cap between planning and execution.
+**Chosen:** the executor re-runs the same deterministic Policy Engine against
+CURRENT state immediately before money moves.
+**Reason:** a stored policy decision records that an action was AUTHORISED. It
+does not prove it is still PERMITTED — the daily total, the payment's status,
+the customer's opt-out and the retry count all change between the two moments.
+Policy has to be the gate at the point money moves, not only when the plan was
+drawn up.
+**Verified:** same batch now executes ₹24,822 with 17 refused as
+`daily_limit_exceeded`.
+**Also:** the executor's hand-rolled already-paid / opt-out checks were deleted.
+The Policy Engine owns those rules; a second copy in the executor is a second
+thing to keep in sync and a second thing to get wrong.
+**Status:** AGENT DECISION — pending human review · **Date:** 2026-08-28
+
+---
+
+## D14 — The daily cap follows the merchant's timezone, not UTC
+**Question:** which 24 hours does "₹25,000 per day" mean?
+**Chosen:** `Asia/Kolkata`, configurable per merchant.
+**Reason:** a UTC day rolls over at 05:30 IST. Under a UTC window an Indian
+merchant's daily cap resets mid-morning, and spend between midnight and 05:30
+IST is attributed to the previous day — so the effective cap for that window is
+higher than stated. Demonstrated: ₹50 spent at 02:00 IST was invisible to a UTC
+window at 11:00 IST the same day.
+**The LIMIT is unchanged.** Only the window it applies to is corrected.
+**Status:** AGENT DECISION — pending human review · **Date:** 2026-08-28
+
+---
+
+## D15 — Policy version provenance across authorization and execution
+**Chosen:** every recovery action records BOTH the policy that authorized it
+and the policy evaluated immediately before execution. Neither overwrites the
+other.
+
+**Principle:** *authorization history and execution authority are two separate
+facts.* One says why the action was allowed to be planned; the other says why
+money did or did not move. Collapsing them into a single mutable field destroys
+the ability to answer either question afterwards.
+
+**Stored as two rows** in `policy_decisions`, distinguished by `phase`
+(`authorization` | `execution`). A unique partial index allows exactly one
+authorization per action; execution-phase rows are unconstrained, because an
+action may legitimately be evaluated for execution more than once.
+
+**Snapshot hash, not just a version string.** Versions are reused, migrated and
+renamed — "v3" next year may not describe the rules it describes today. Each
+evaluation stores a SHA-256 fingerprint of the complete policy snapshot it ran
+against, so the execution-time evaluation is reproducible even if the
+representation of policy changes underneath.
+
+**Explicit field names**, because a bare `policy_version` is ambiguous about
+which evaluation it describes:
+```
+authorized_policy_version   / authorized_policy_hash   / authorized_at
+execution_policy_version    / execution_policy_hash
+                            / execution_policy_evaluated_at / executed_at
+```
+
+**An execution-phase decision is written even when the action is REFUSED.** A
+refusal creates no execution record, so without that row the reason money did
+NOT move would exist only in a log line.
+
+**Answers the three auditor questions:**
+1. Why was it originally allowed? → the authorization evaluation
+2. Why wasn't it executed? → the execution evaluation
+3. Was the newer policy correctly applied? → both snapshots pinned by hash
+
+**Status:** APPROVED — required architectural correction, not a nice-to-have.
+Human confirmed. Marked *required before production, not demo-blocking*.
+**Date:** 2026-08-28
+
+---
+
+## D16 — Monetary field names must be currency-neutral
+**Status: TECHNICAL DEBT — deliberately deferred, not overlooked.**
+
+**Problem:** fields such as `max_daily_recovery_paise` hold generic minor
+currency units, not Indian paise specifically. For a USD merchant,
+`max_daily_recovery_paise = 500_000` with `currency = "USD"` means **$5,000.00**
+— the field name actively implies the wrong currency.
+
+**Target:**
+```
+*_paise  ->  *_amount_minor  (or *_minor)
+```
+with an explicit ISO-4217 `currency` alongside. The currency supplies the
+semantic context; the `_minor` suffix supplies the unit.
+
+**Rule regardless of naming:** the application must NEVER infer currency from a
+field name. Currency is data, not nomenclature.
+
+**Preferred end state — a Money value object**, so amounts in different
+currencies cannot be compared or summed by accident:
+```
+Money
+├── amount_minor
+└── currency
+```
+The Policy Engine would operate on `Money(500_000, "USD")` rather than naked
+integers. This matters as soon as one agent operates across INR/USD/EUR/GBP.
+
+**Why NOT renamed now:** this is a cross-system contract change, not a
+find-and-replace. Scope: DB schema, models/types, Policy Engine, queries, API
+contracts, planner, executor, frontend, fixtures, tests, audit/event schemas.
+
+A PARTIAL rename is strictly worse than the current debt, because
+`*_paise` and `*_minor` would coexist in different layers of the same system —
+and the resulting ambiguity is exactly the bug this rename exists to prevent.
+
+**Risk:** medium — broad schema contract change.
+**Priority:** high before multi-currency production.
+**Demo blocker:** no. **Production blocker:** yes, for non-INR currencies.
+**Mitigation until then:** `currency` is stored per merchant AND enforced at the
+Razorpay client boundary — a merchant configured for a currency this
+integration cannot settle is refused rather than silently charged in rupees.
+**Date:** 2026-08-28

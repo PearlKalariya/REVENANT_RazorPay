@@ -23,6 +23,12 @@ from ..config import Settings
 log = logging.getLogger(__name__)
 
 API_BASE = "https://api.razorpay.com/v1"
+
+#: The only currency this integration can settle. Razorpay's Indian entity is
+#: INR-only, and every amount in this system is stored in paise. A merchant
+#: configured for any other currency must be REFUSED, not silently charged in
+#: rupees — the config would say USD while the customer is billed INR.
+SUPPORTED_CURRENCIES = frozenset({"INR"})
 TIMEOUT = httpx.Timeout(20.0, connect=10.0)
 
 
@@ -116,6 +122,7 @@ class RazorpayClient:
         customer_email: str | None = None,
         customer_contact: str | None = None,
         expire_by: int | None = None,
+        currency: str = "INR",
     ) -> PaymentLink:
         """Create a test-mode Payment Link.
 
@@ -127,6 +134,12 @@ class RazorpayClient:
         contact details are fabricated; REVENANT must never send mail or SMS to
         them. Re-enabling this requires a human decision.
         """
+        if currency not in SUPPORTED_CURRENCIES:
+            raise RazorpayError(
+                f"Merchant is configured for {currency}, but this integration "
+                f"can only settle {sorted(SUPPORTED_CURRENCIES)}. Refusing "
+                "rather than charging in the wrong currency."
+            )
         if not isinstance(amount_paise, int) or isinstance(amount_paise, bool):
             raise RazorpayError("amount_paise must be an integer.")
         if amount_paise <= 0:
@@ -134,7 +147,7 @@ class RazorpayClient:
 
         payload: dict = {
             "amount": amount_paise,
-            "currency": "INR",
+            "currency": currency,
             "accept_partial": False,
             "description": description[:255],
             "reference_id": reference_id,

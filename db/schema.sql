@@ -42,6 +42,10 @@ CREATE TYPE job_status AS ENUM (
     'queued', 'running', 'done', 'failed'
 );
 
+-- When a policy evaluation happened. Authorization and execution are two
+-- separate facts about an action and must never overwrite each other (D15).
+CREATE TYPE evaluation_phase AS ENUM ('authorization', 'execution');
+
 -- ---------------------------------------------------------------------------
 -- Core entities
 -- ---------------------------------------------------------------------------
@@ -168,18 +172,34 @@ CREATE INDEX idx_actions_status   ON recovery_actions(status);
 -- Policy and approval
 -- ---------------------------------------------------------------------------
 
+-- Every policy evaluation, at BOTH phases. Append-only: an execution-phase
+-- decision never overwrites the authorization that preceded it, so an auditor
+-- can always answer why an action was originally allowed AND why it did or did
+-- not execute (D15).
 CREATE TABLE policy_decisions (
     id              BIGSERIAL PRIMARY KEY,
     action_id       BIGINT NOT NULL REFERENCES recovery_actions(id) ON DELETE CASCADE,
+    phase           evaluation_phase NOT NULL,
     result          policy_result NOT NULL,
     rule            TEXT NOT NULL,
     reason          TEXT NOT NULL,
     policy_version  TEXT NOT NULL,
+    -- Fingerprint of the exact policy snapshot evaluated. A version string is
+    -- not enough: versions are reused, migrated and renamed, so "v3" today may
+    -- not describe the same rules as "v3" next year. The hash pins the actual
+    -- values, and survives a change in how policy is represented.
+    policy_hash     TEXT NOT NULL,
     metadata        JSONB NOT NULL DEFAULT '{}'::jsonb,
     evaluated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_policy_action ON policy_decisions(action_id);
+CREATE INDEX idx_policy_action ON policy_decisions(action_id, phase);
+
+-- Exactly one authorization per action. Execution-phase rows are unconstrained:
+-- an action may be evaluated for execution more than once (a retry after a
+-- transient failure), and every attempt is part of the record.
+CREATE UNIQUE INDEX one_authorization_per_action
+    ON policy_decisions(action_id) WHERE phase = 'authorization';
 
 CREATE TABLE approvals (
     id              BIGSERIAL PRIMARY KEY,
@@ -212,7 +232,13 @@ CREATE TABLE execution_records (
     error               TEXT,
     attempts            INTEGER NOT NULL DEFAULT 0,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
-    completed_at        TIMESTAMPTZ
+    -- The policy context under which money movement was PERMITTED, captured at
+    -- the moment of execution rather than inherited from the authorization.
+    execution_policy_version        TEXT,
+    execution_policy_hash           TEXT,
+    execution_policy_evaluated_at   TIMESTAMPTZ,
+    -- When the money movement itself concluded, success or failure.
+    executed_at         TIMESTAMPTZ
 );
 
 CREATE INDEX idx_exec_action ON execution_records(action_id);
