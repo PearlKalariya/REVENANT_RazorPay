@@ -28,3 +28,4 @@ build/
 # Local data
 *.db
 *.sqlite3
+frontend/.env*.local

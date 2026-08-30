@@ -162,8 +162,10 @@ async def record_outcome(
         conn, execution_id, event_id,
         "REVENUE_RECOVERED" if succeeded else "RECOVERY_FAILED",
         recovered,
-        f"{event_type} verified by Razorpay" if succeeded
-        else f"{event_type}: recovery did not convert",
+        # Prose, not an event name: `event_type` already carries the
+        # machine-readable value, and this string is shown to a merchant.
+        "Confirmed paid by Razorpay" if succeeded
+        else "Recovery did not convert",
     )
     log.info("outcome.recorded execution=%s recovered=%s succeeded=%s",
              execution_id, recovered, succeeded)

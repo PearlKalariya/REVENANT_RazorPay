@@ -46,9 +46,18 @@ class Settings(BaseSettings):
     #: an unset key fails closed rather than allowing everyone.
     api_key: str = ""
 
+    #: Origins the browser dashboard may call from. Explicit list, never "*":
+    #: a wildcard with credentialed requests is refused by browsers anyway, and
+    #: an allow-all CORS policy on an endpoint that moves money is not a policy.
+    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+
     #: Expose /docs, /redoc and /openapi.json. Off by default so the API
     #: surface — including dev routes — is not advertised publicly.
     enable_api_docs: bool = False
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
     @property
     def llm_api_key(self) -> str:

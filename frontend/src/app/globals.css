@@ -1,0 +1,71 @@
+@import "tailwindcss";
+
+/* ───────────────────────────────────────────────────────────────
+   REVENANT design tokens — lifted from the approved artboard.
+
+   Six colours, each with a job. Nothing here is decorative: you
+   should be able to read the screen by hue before reading a word.
+   ─────────────────────────────────────────────────────────────── */
+@theme {
+  --color-ink:        #0d0d0d;  /* rules, type, borders                 */
+  --color-paper:      #faf5e8;  /* warm ground — never pure white       */
+  --color-paper-deep: #f2ecdb;  /* the decision column                  */
+  --color-recovered:  #00c46a;  /* money that came back                 */
+  --color-risk:       #ff4b2b;  /* money at risk / refused              */
+  --color-decide:     #ffd400;  /* your decision required               */
+  --color-machine:    #2438e0;  /* the system decided alone             */
+  --color-judgement:  #7b2ff7;  /* AI judgement — scores, severity      */
+
+  --font-display: var(--font-syne), ui-sans-serif, system-ui, sans-serif;
+  --font-sans:    var(--font-grotesk), ui-sans-serif, system-ui, sans-serif;
+  --font-mono:    var(--font-space-mono), ui-monospace, monospace;
+}
+
+@layer base {
+  html { background: var(--color-paper); }
+  body {
+    background: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  /* Figures must align in columns; this is a money product. */
+  .tnum { font-variant-numeric: tabular-nums lining-nums; }
+}
+
+@layer components {
+  .disp { font-family: var(--font-display); font-weight: 800; letter-spacing: -0.035em; }
+  .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+  /* Hard offset shadows — no blur. The whole surface is printed, not soft. */
+  .hard   { box-shadow: 5px 5px 0 var(--color-ink); }
+  .hard-sm{ box-shadow: 3px 3px 0 var(--color-ink); }
+
+  .stripe {
+    background-image: repeating-linear-gradient(45deg,
+      rgba(13,13,13,.10) 0 6px, transparent 6px 13px);
+    animation: drift-stripe 22s linear infinite;
+  }
+  .dots {
+    background-image: radial-gradient(var(--color-ink) 1.3px, transparent 1.4px);
+    background-size: 9px 9px;
+    animation: drift-dots 26s linear infinite;
+  }
+}
+
+/* Ambient motion. Slow and low-amplitude on purpose — the surfaces have a
+   pulse, the figures stay the only thing that grabs you.
+
+   Shift distances are whole multiples of each pattern's period so the loops
+   are seamless: 9px for the dot grid, 13·√2 ≈ 18.38px for the 45° stripes. */
+@keyframes drift-dots     { from { background-position: 0 0; } to { background-position: 18px 18px; } }
+@keyframes drift-dots-rev { from { background-position: 0 0; } to { background-position: -18px 18px; } }
+@keyframes drift-stripe   { from { background-position: 0 0; } to { background-position: 36.77px 0; } }
+@keyframes sheen   { from { transform: translateX(-140%) skewX(-18deg); } to { transform: translateX(240%) skewX(-18deg); } }
+@keyframes shimmer { 0%,100% { opacity: 0; } 50% { opacity: .22; } }
+@keyframes blink   { 0%,49% { opacity: 1; } 50%,100% { opacity: .25; } }
+@keyframes tick    { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .stripe, .dots, [class*="animate-"] { animation: none !important; }
+}

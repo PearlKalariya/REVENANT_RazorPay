@@ -9,6 +9,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from . import db
 from .agents.llm import resolve_model_name
@@ -37,6 +38,17 @@ app = FastAPI(
     openapi_url="/openapi.json" if _settings.enable_api_docs else None,
 )
 
+
+# Explicit origins only. The dashboard sends an API key on approve/deny, and
+# an allow-all policy in front of endpoints that authorise money movement is
+# not a policy.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_settings.cors_origin_list,
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
+    allow_headers=["content-type", "x-api-key"],
+)
 
 app.include_router(webhooks_router)
 app.include_router(api_router)

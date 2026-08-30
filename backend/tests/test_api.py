@@ -25,6 +25,60 @@ def key():
     return get_settings().api_key
 
 
+@pytest.fixture
+def restore_decisions():
+    """Undo any approval a test records.
+
+    These tests drive the real app through TestClient, so unlike the asyncpg
+    fixtures elsewhere there is no transaction to roll back — writes COMMIT.
+    Running the suite was permanently consuming pending approvals and leaving
+    the dashboard with fewer decisions than the batch actually produced.
+
+    A test suite that quietly mutates the data it is run against is worse than
+    no test: the state you inspect afterwards is not the state you had.
+    """
+    import asyncio
+
+    import asyncpg
+
+    async def snapshot():
+        conn = await asyncpg.connect(get_settings().database_url, timeout=3)
+        try:
+            return (
+                {r["action_id"] for r in await conn.fetch("SELECT action_id FROM approvals")},
+                {r["id"]: r["status"] for r in await conn.fetch(
+                    "SELECT id, status::text AS status FROM recovery_actions")},
+            )
+        finally:
+            await conn.close()
+
+    async def restore(before_approvals, before_status):
+        conn = await asyncpg.connect(get_settings().database_url, timeout=3)
+        try:
+            await conn.execute(
+                "DELETE FROM approvals WHERE action_id <> ALL($1::bigint[])",
+                list(before_approvals))
+            for action_id, status in before_status.items():
+                await conn.execute(
+                    "UPDATE recovery_actions SET status=$2::action_status"
+                    " WHERE id=$1 AND status::text <> $2",
+                    action_id, status)
+            await conn.execute(
+                "DELETE FROM audit_events"
+                " WHERE event_type IN ('APPROVAL_GRANTED','APPROVAL_DENIED')"
+                "   AND action_id <> ALL($1::bigint[])",
+                list(before_approvals))
+        finally:
+            await conn.close()
+
+    try:
+        before = asyncio.run(snapshot())
+    except Exception:
+        pytest.skip("Postgres not reachable")
+    yield
+    asyncio.run(restore(*before))
+
+
 # --- read endpoints -------------------------------------------------------
 
 
@@ -99,7 +153,7 @@ def test_deny_requires_api_key(client):
     assert r.status_code == 401
 
 
-def test_approval_requires_an_identified_approver(client, key):
+def test_approval_requires_an_identified_approver(client, key, restore_decisions):
     """Attribution is not optional for a financial approval: an audit trail
     that cannot name who approved a payment is not an audit trail."""
     aid = _awaiting(client)
@@ -118,7 +172,7 @@ def test_wrong_key_rejected(client):
     assert r.status_code == 401
 
 
-def test_cannot_approve_an_action_not_awaiting_approval(client, key):
+def test_cannot_approve_an_action_not_awaiting_approval(client, key, restore_decisions):
     executed = client.get("/recovery-actions?status_filter=executed").json()["actions"]
     if not executed:
         pytest.skip("no executed action")
@@ -127,7 +181,7 @@ def test_cannot_approve_an_action_not_awaiting_approval(client, key):
     assert r.status_code == 409
 
 
-def test_approval_response_states_it_is_not_a_guarantee(client, key):
+def test_approval_response_states_it_is_not_a_guarantee(client, key, restore_decisions):
     """Approval AUTHORISES; policy is re-evaluated at execution and may still
     refuse (D13). The response has to say so, or an approver will assume the
     money moved."""
