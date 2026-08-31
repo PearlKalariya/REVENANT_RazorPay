@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { decide, label, type RecoveryAction } from "@/lib/api";
+import { decide, label, type Decision, type RecoveryAction } from "@/lib/api";
 
 /**
  * The only screen that writes.
@@ -18,7 +18,7 @@ export function ApprovalQueue({ initial }: { initial: RecoveryAction[] }) {
   const [approver, setApprover] = useState("");
   const [busy, setBusy] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState<{ approved: boolean } | null>(null);
+  const [done, setDone] = useState<Decision | null>(null);
   const [, startTransition] = useTransition();
 
   if (!pending.length) {
@@ -40,9 +40,9 @@ export function ApprovalQueue({ initial }: { initial: RecoveryAction[] }) {
     setError(null);
     setBusy(action.id);
     try {
-      await decide(action.id, approved, approver.trim());
+      const result = await decide(action.id, approved, approver.trim());
       setPending((q) => q.filter((a) => a.id !== action.id));
-      setDone({ approved });
+      setDone(result);
       startTransition(() => router.refresh());
     } catch (e) {
       setError(e instanceof Error ? e.message : "Decision failed");
@@ -73,11 +73,31 @@ export function ApprovalQueue({ initial }: { initial: RecoveryAction[] }) {
         </div>
       )}
       {done && (
-        <div className="hard-sm mb-5 border-[3px] border-ink bg-recovered px-4 py-3 text-[13.5px]">
-          <strong>{done.approved ? "Approved." : "Denied."}</strong>{" "}
-          {done.approved
-            ? "Authorised — policy runs again before money moves."
-            : "No money will move for this payment."}
+        <div
+          className={`hard-sm mb-5 border-[3px] border-ink px-4 py-3 text-[13.5px] ${
+            done.executed ? "bg-recovered" : done.approved ? "bg-decide" : "bg-paper-deep"
+          }`}
+        >
+          <strong>{done.approved ? "Approved." : "Denied."}</strong> {done.note}
+          {done.payment_link && (
+            <>
+              {" "}
+              <a
+                href={done.payment_link}
+                target="_blank"
+                rel="noreferrer"
+                className="mono font-bold underline"
+              >
+                open the payment link →
+              </a>
+            </>
+          )}
+          {done.refused_rule && (
+            <div className="mono mt-2 text-[11.5px]">
+              Policy re-checked at execution and refused: {label(done.refused_rule)}.
+              The approval is still on the record.
+            </div>
+          )}
         </div>
       )}
 

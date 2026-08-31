@@ -96,12 +96,23 @@ export const getActions = (status?: string) =>
   );
 export const getAudit = (limit = 40) => get<{ events: AuditEvent[] }>(`/audit?limit=${limit}`);
 
+export type Decision = {
+  action_id: number;
+  approved: boolean;
+  approver: string;
+  executed: boolean;
+  execution_status?: string;
+  payment_link?: string | null;
+  refused_rule?: string;
+  note: string;
+};
+
 export async function decide(
   actionId: number,
   approved: boolean,
   approver: string,
   note?: string,
-) {
+): Promise<Decision> {
   const res = await fetch(
     `${BASE}/recovery-actions/${actionId}/${approved ? "approve" : "deny"}`,
     {

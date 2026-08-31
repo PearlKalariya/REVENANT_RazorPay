@@ -22,6 +22,8 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
 
 from . import db
 from .config import get_settings
+from .integrations.razorpay_client import RazorpayClient, RazorpayError
+from .recovery.executor import ExecutionRefused, execute_action
 from .recovery.provenance import action_provenance
 from .redaction import redact
 from .security import require_api_key
@@ -219,14 +221,63 @@ async def _decide(action_id: int, approved: bool, approver: str, note: str | Non
                 row["incident_id"], action_id, inserted,
                 int(row["amount_paise"]), note or "")
 
+    if not approved:
+        return {
+            "action_id": action_id, "approved": False, "approver": approver,
+            "executed": False,
+            "note": "Denied. No money will move for this payment.",
+        }
+
+    # An approval that does not lead anywhere is not an approval. Without this
+    # the action sat at status 'approved' forever: no execution, no payment
+    # link, nothing for a customer to pay — so recovered revenue could never
+    # rise no matter how many approvals were granted.
+    #
+    # Executing here does NOT bypass anything. execute_action re-runs the
+    # Policy Engine against current state first (D13), so an approval granted
+    # this morning can still be refused now — a tightened cap, a customer who
+    # opted out since, a payment already settled.
+    settings = get_settings()
+    try:
+        client = RazorpayClient(settings)
+    except RazorpayError as e:
+        return {
+            "action_id": action_id, "approved": True, "approver": approver,
+            "executed": False, "note": f"Approved, but Razorpay is unavailable: {e}",
+        }
+
+    async with db.pool().acquire() as conn:
+        try:
+            outcome = await execute_action(
+                conn, client, action_id=action_id,
+                merchant_id=DEMO_MERCHANT, settings=settings)
+        except ExecutionRefused as e:
+            # The approval stands and is recorded; policy refused the movement.
+            # Both facts are true and both belong in the response.
+            return {
+                "action_id": action_id, "approved": True, "approver": approver,
+                "executed": False, "refused_rule": e.rule,
+                "note": f"Approved, but policy refused execution: {e}",
+            }
+        except RazorpayError as e:
+            return {
+                "action_id": action_id, "approved": True, "approver": approver,
+                "executed": False, "note": f"Approved. Razorpay error: {e}",
+            }
+
     return {
         "action_id": action_id,
-        "approved": approved,
+        "approved": True,
         "approver": approver,
-        # Approval AUTHORISES. It does not guarantee execution: policy is
-        # re-evaluated against current state at execution time (D13).
-        "note": "Approval authorises execution. Policy is re-evaluated "
-                "immediately before money moves and may still refuse.",
+        "executed": outcome.status == "succeeded",
+        "execution_status": outcome.status,
+        "payment_link": outcome.short_url,
+        "note": (
+            "Approved and payment link sent."
+            if outcome.status == "succeeded"
+            else f"Approved. Execution is {outcome.status} — "
+                 "the outcome engine will resolve it."
+        ),
     }
 
 
