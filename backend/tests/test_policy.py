@@ -30,7 +30,7 @@ def action(amount_rupees=2_400, action_type=ActionType.CREATE_PAYMENT_LINK, **kw
         action=action_type,
         customer_id="CUST_829",
         payment_id="pay_TEST123",
-        amount_paise=amount_rupees * RUPEE,
+        amount_minor=amount_rupees * RUPEE,
         proposed_at=NOW,
     )
     defaults.update(kw)
@@ -42,7 +42,7 @@ def context(**kw):
         payment_status=PaymentStatus.FAILED,
         customer_opted_out=False,
         prior_attempts=0,
-        recovered_today_paise=0,
+        recovered_today_minor=0,
         now=NOW,
         last_attempt_at=None,
     )
@@ -120,14 +120,14 @@ def test_high_amount_is_not_auto_executable():
 
 
 def test_daily_limit_exceeded_is_blocked():
-    d = evaluate(action(3_000), context(recovered_today_paise=2_400_000))
+    d = evaluate(action(3_000), context(recovered_today_minor=2_400_000))
     assert d.decision is Decision.BLOCKED
     assert d.rule == "daily_limit_exceeded"
 
 
 def test_daily_limit_exactly_at_cap_is_allowed():
     """₹24,000 recovered + ₹1,000 = ₹25,000 cap exactly. Inclusive."""
-    d = evaluate(action(1_000), context(recovered_today_paise=2_400_000))
+    d = evaluate(action(1_000), context(recovered_today_minor=2_400_000))
     assert d.decision is Decision.AUTO_APPROVED
 
 
@@ -137,7 +137,7 @@ def test_daily_limit_blocks_before_approval_escalation():
     Precedence matters: escalating would put a cap breach in front of a human
     who could approve it, silently defeating the cap.
     """
-    d = evaluate(action(10_000), context(recovered_today_paise=2_400_000))
+    d = evaluate(action(10_000), context(recovered_today_minor=2_400_000))
     assert d.decision is Decision.BLOCKED
     assert d.rule == "daily_limit_exceeded"
 
@@ -182,20 +182,20 @@ def test_unknown_action_type_is_blocked():
 
 @pytest.mark.parametrize("amount", [0, -1, -500_000])
 def test_invalid_amounts_are_blocked(amount):
-    d = evaluate(action(amount_paise=amount), context())
+    d = evaluate(action(amount_minor=amount), context())
     assert d.decision is Decision.BLOCKED
     assert d.rule == "invalid_amount"
 
 
 def test_non_integer_amount_is_blocked():
-    d = evaluate(action(amount_paise=2400.5), context())
+    d = evaluate(action(amount_minor=2400.5), context())
     assert d.decision is Decision.BLOCKED
     assert d.rule == "invalid_amount"
 
 
 def test_boolean_amount_is_blocked():
     """bool is a subclass of int in Python. True must not read as ₹0.01."""
-    d = evaluate(action(amount_paise=True), context())
+    d = evaluate(action(amount_minor=True), context())
     assert d.decision is Decision.BLOCKED
     assert d.rule == "invalid_amount"
 
@@ -295,7 +295,7 @@ def test_notification_still_respects_already_paid():
 
 
 def test_custom_config_changes_threshold():
-    strict = PolicyConfig(max_auto_amount_paise=100_000)  # ₹1,000
+    strict = PolicyConfig(max_auto_amount_minor=100_000)  # ₹1,000
     d = evaluate(action(2_400), context(), strict)
     assert d.decision is Decision.REQUIRES_APPROVAL
 

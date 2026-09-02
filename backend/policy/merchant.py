@@ -73,9 +73,9 @@ def build_policy(raw: dict | None) -> PolicyConfig:
     except ValueError as e:
         raise MerchantConfigError(str(e)) from e
 
-    if config.max_auto_amount_paise > config.max_daily_recovery_paise:
+    if config.max_auto_amount_minor > config.max_daily_recovery_minor:
         raise MerchantConfigError(
-            "max_auto_amount_paise exceeds max_daily_recovery_paise — a single "
+            "max_auto_amount_minor exceeds max_daily_recovery_minor — a single "
             "auto-approved action could not fit inside the daily cap."
         )
     return config

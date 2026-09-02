@@ -19,7 +19,7 @@ from .engine import DetectionConfig, Incident, PaymentRecord, detect
 async def load_payments(conn: asyncpg.Connection, merchant_id: str) -> list[PaymentRecord]:
     rows = await conn.fetch(
         """
-        SELECT id, customer_id, amount_paise, status::text AS status,
+        SELECT id, customer_id, amount_minor, status::text AS status,
                method, created_at, failure_reason
         FROM payments
         WHERE merchant_id = $1
@@ -30,7 +30,7 @@ async def load_payments(conn: asyncpg.Connection, merchant_id: str) -> list[Paym
         PaymentRecord(
             id=r["id"],
             customer_id=r["customer_id"],
-            amount_paise=r["amount_paise"],
+            amount_minor=r["amount_minor"],
             status=r["status"],
             method=r["method"],
             created_at=r["created_at"],
@@ -62,11 +62,11 @@ async def persist_incident(
         await conn.execute(
             """
             UPDATE revenue_incidents
-               SET revenue_at_risk_paise = $2, affected_count = $3
+               SET revenue_at_risk_minor = $2, affected_count = $3
              WHERE id = $1
             """,
             existing,
-            incident.revenue_at_risk_paise,
+            incident.revenue_at_risk_minor,
             incident.affected_count,
         )
         return existing, False
@@ -74,14 +74,14 @@ async def persist_incident(
     incident_id = await conn.fetchval(
         """
         INSERT INTO revenue_incidents
-            (merchant_id, title, status, revenue_at_risk_paise,
+            (merchant_id, title, status, revenue_at_risk_minor,
              affected_count, detected_at)
         VALUES ($1, $2, 'open', $3, $4, $5)
         RETURNING id
         """,
         merchant_id,
         incident.title,
-        incident.revenue_at_risk_paise,
+        incident.revenue_at_risk_minor,
         incident.affected_count,
         incident.window_start,
     )
@@ -89,13 +89,13 @@ async def persist_incident(
     await conn.execute(
         """
         INSERT INTO audit_events
-            (actor, event_type, merchant_id, incident_id, amount_paise, reason,
+            (actor, event_type, merchant_id, incident_id, amount_minor, reason,
              metadata)
         VALUES ('SYSTEM', 'REVENUE_INCIDENT_DETECTED', $1, $2, $3, $4, $5)
         """,
         merchant_id,
         incident_id,
-        incident.revenue_at_risk_paise,
+        incident.revenue_at_risk_minor,
         f"{incident.affected_count} failed payments, "
         f"{incident.observed_failure_rate:.1%} failure rate vs "
         f"{incident.baseline_failure_rate:.1%} baseline",

@@ -27,7 +27,7 @@ def payments_at(hour, *, method="upi", n=10, failures=0, amount=100_000,
             PaymentRecord(
                 id=f"pay_{method}_{hour}_{start_id + i}",
                 customer_id=f"cust_{i}",
-                amount_paise=amount,
+                amount_minor=amount,
                 status="failed" if failed else "captured",
                 method=method,
                 created_at=BASE + timedelta(hours=hour, minutes=i),
@@ -69,7 +69,7 @@ def test_incident_reports_revenue_at_risk():
     data += payments_at(14, n=12, failures=9, amount=250_000, start_id=900)
     inc = detect(data)[0]
     assert inc.affected_count == 10           # 9 spike + 1 background
-    assert inc.revenue_at_risk_paise == 9 * 250_000 + 100_000
+    assert inc.revenue_at_risk_minor == 9 * 250_000 + 100_000
 
 
 def test_top_failure_reason_is_surfaced():
@@ -187,7 +187,7 @@ def test_incidents_sorted_by_revenue_at_risk():
     data += payments_at(6, n=12, failures=9, amount=50_000, start_id=800)
     data += payments_at(18, n=12, failures=9, amount=500_000, start_id=900)
     incidents = detect(data)
-    assert incidents[0].revenue_at_risk_paise > incidents[1].revenue_at_risk_paise
+    assert incidents[0].revenue_at_risk_minor > incidents[1].revenue_at_risk_minor
 
 
 def test_config_thresholds_are_honoured():

@@ -117,7 +117,7 @@ async def test_incident_details_returns_expected_fields(pool):
     out = json.loads(await tools["get_incident_details"].coroutine(incident_id=1))
     if "error" in out:
         pytest.skip("no seeded incident — run detection first")
-    for field in ("incident_id", "revenue_at_risk_paise", "affected_count",
+    for field in ("incident_id", "revenue_at_risk_minor", "affected_count",
                   "observed_failure_rate", "baseline_failure_rate"):
         assert field in out
 
@@ -188,6 +188,6 @@ def test_investigation_result_has_no_action_fields():
     from backend.agents.investigation import InvestigationResult
 
     fields = set(InvestigationResult.model_fields)
-    for forbidden in ("action", "amount", "amount_paise", "approve",
+    for forbidden in ("action", "amount", "amount_minor", "approve",
                       "execute", "payment_link"):
         assert forbidden not in fields

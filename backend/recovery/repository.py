@@ -102,7 +102,7 @@ async def _insert_action(
     action_id = await conn.fetchval(
         """
         INSERT INTO recovery_actions
-            (incident_id, payment_id, customer_id, action, amount_paise,
+            (incident_id, payment_id, customer_id, action, amount_minor,
              status, recovery_score, rationale, proposed_at, expires_at)
         VALUES ($1,$2,$3,$4::action_type,$5,$6::action_status,$7,$8,$9,$10)
         ON CONFLICT DO NOTHING
@@ -112,7 +112,7 @@ async def _insert_action(
         candidate.payment_id,
         candidate.customer_id,
         candidate.action.action.value,
-        candidate.amount_paise,
+        candidate.amount_minor,
         status,
         candidate.recovery_score,
         decision.reason,
@@ -143,7 +143,7 @@ async def _insert_action(
         """
         INSERT INTO audit_events
             (actor, event_type, merchant_id, customer_id, payment_id,
-             incident_id, action_id, amount_paise, policy_version,
+             incident_id, action_id, amount_minor, policy_version,
              policy_result, reason, metadata)
         VALUES ('POLICY_ENGINE','POLICY_EVALUATED',$1,$2,$3,$4,$5,$6,$7,
                 $8::policy_result,$9,$10)
@@ -153,7 +153,7 @@ async def _insert_action(
         candidate.payment_id,
         incident_id,
         action_id,
-        candidate.amount_paise,
+        candidate.amount_minor,
         decision.policy_version,
         decision.decision.value,
         decision.reason,

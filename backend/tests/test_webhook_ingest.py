@@ -90,7 +90,7 @@ async def test_valid_signature_accepted(conn):
     result, event = await _ingest(conn, raw, sig, new_event_id())
     assert result == ACCEPTED
     assert event.event_type == "payment_link.paid"
-    assert event.amount_paise == 240000
+    assert event.amount_minor == 240000
 
 
 async def test_forged_signature_rejected_and_not_persisted(conn):
@@ -224,7 +224,7 @@ def test_normalize_extracts_fields():
     assert event.event_id == "evt_1"
     assert event.payment_id == "pay_SYN00001"
     assert event.payment_link_id == "plink_T1"
-    assert event.amount_paise == 240000
+    assert event.amount_minor == 240000
 
 
 def test_normalize_returns_none_for_missing_event():

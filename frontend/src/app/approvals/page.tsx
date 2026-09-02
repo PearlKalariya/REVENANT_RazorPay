@@ -1,6 +1,7 @@
 import { Header, DataNote, SectionRule } from "@/components/chrome";
 import { AuditTicker } from "@/components/ticker";
-import { getActions, type RecoveryAction } from "@/lib/api";
+import { getActions, type RecoveryAction, moneyShort
+} from "@/lib/api";
 import { ApprovalQueue } from "./queue";
 
 export const dynamic = "force-dynamic";
@@ -23,7 +24,7 @@ export default async function Approvals() {
     );
   }
 
-  const held = pending.reduce((s, a) => s + a.amount_paise, 0);
+  const held = pending.reduce((s, a) => s + a.amount_minor, 0);
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -35,7 +36,7 @@ export default async function Approvals() {
           <div className="relative">
             <span className="mono text-[11px] font-bold tracking-[.16em]">HELD FOR YOU</span>
             <div className="disp tnum mt-2 leading-none text-[clamp(28px,3.4vw,50px)]">
-              ₹{Math.round(held / 100).toLocaleString("en-IN")}
+              {moneyShort(held)}
             </div>
             <div className="mono mt-1.5 text-[11px]">
               {pending.length} {pending.length === 1 ? "DECISION" : "DECISIONS"} PENDING

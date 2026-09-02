@@ -1,6 +1,7 @@
 import { Header, DataNote, SectionRule } from "@/components/chrome";
 import { AuditTicker } from "@/components/ticker";
-import { getActions, label, type RecoveryAction } from "@/lib/api";
+import { getActions, label, type RecoveryAction, moneyShort
+} from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
@@ -27,8 +28,8 @@ export default async function Recovery() {
   }
 
   const recovered = actions.filter((a) => a.recovered);
-  const totalRecovered = recovered.reduce((s, a) => s + a.recovered_paise, 0);
-  const attempted = actions.filter((a) => a.payment_link).reduce((s, a) => s + a.amount_paise, 0);
+  const totalRecovered = recovered.reduce((s, a) => s + a.recovered_minor, 0);
+  const attempted = actions.filter((a) => a.payment_link).reduce((s, a) => s + a.amount_minor, 0);
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -37,8 +38,8 @@ export default async function Recovery() {
       <section className="grid shrink-0 grid-cols-4 border-b-4 border-ink">
         <Cell k="CANDIDATES" v={String(actions.length)} />
         <Cell k="LINKS SENT" v={String(actions.filter((a) => a.payment_link).length)} />
-        <Cell k="ATTEMPTED" v={`₹${Math.round(attempted / 100).toLocaleString("en-IN")}`} />
-        <Cell k="RECOVERED" v={`₹${Math.round(totalRecovered / 100).toLocaleString("en-IN")}`} cls="bg-recovered" last />
+        <Cell k="ATTEMPTED" v={moneyShort(attempted)} />
+        <Cell k="RECOVERED" v={moneyShort(totalRecovered)} cls="bg-recovered" last />
       </section>
 
       <section className="grow px-8 py-7">
@@ -60,7 +61,7 @@ export default async function Recovery() {
               </span>
               {a.recovered ? (
                 <span className="mono tnum text-[12.5px] font-bold text-recovered">
-                  ₹{Math.round(a.recovered_paise / 100).toLocaleString("en-IN")}
+                  {moneyShort(a.recovered_minor)}
                 </span>
               ) : a.payment_link ? (
                 <a href={a.payment_link} target="_blank" rel="noreferrer" className="mono text-[11px] underline">

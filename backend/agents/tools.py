@@ -76,7 +76,7 @@ def build_tools(pool: asyncpg.Pool, merchant_id: str) -> list[StructuredTool]:
             row = await conn.fetchrow(
                 """
                 SELECT i.id, i.title, i.status::text AS status,
-                       i.revenue_at_risk_paise, i.affected_count, i.detected_at,
+                       i.revenue_at_risk_minor, i.affected_count, i.detected_at,
                        a.metadata, a.reason
                   FROM revenue_incidents i
                   LEFT JOIN audit_events a
@@ -99,8 +99,8 @@ def build_tools(pool: asyncpg.Pool, merchant_id: str) -> list[StructuredTool]:
                 "incident_id": row["id"],
                 "title": row["title"],
                 "status": row["status"],
-                "revenue_at_risk_paise": _int(row["revenue_at_risk_paise"]),
-                "revenue_at_risk": _rupees(row["revenue_at_risk_paise"]),
+                "revenue_at_risk_minor": _int(row["revenue_at_risk_minor"]),
+                "revenue_at_risk": _rupees(row["revenue_at_risk_minor"]),
                 "affected_count": _int(row["affected_count"]),
                 "detected_at": _iso(row["detected_at"]),
                 "detector_summary": row["reason"],
@@ -125,8 +125,8 @@ def build_tools(pool: asyncpg.Pool, merchant_id: str) -> list[StructuredTool]:
                        date_trunc('hour', created_at) AS hour,
                        count(*) AS total,
                        count(*) FILTER (WHERE status = 'failed') AS failed,
-                       sum(amount_paise) FILTER (WHERE status = 'failed')
-                           AS failed_paise
+                       sum(amount_minor) FILTER (WHERE status = 'failed')
+                           AS failed_minor
                   FROM payments
                  WHERE merchant_id = $1
                    AND ($2::text IS NULL OR method = $2)
@@ -145,7 +145,7 @@ def build_tools(pool: asyncpg.Pool, merchant_id: str) -> list[StructuredTool]:
                     "total": _int(r["total"]),
                     "failed": _int(r["failed"]),
                     "failure_rate": round(r["failed"] / r["total"], 4),
-                    "failed_paise": _int(r["failed_paise"]),
+                    "failed_minor": _int(r["failed_minor"]),
                 }
                 for r in rows
             ],
@@ -167,7 +167,7 @@ def build_tools(pool: asyncpg.Pool, merchant_id: str) -> list[StructuredTool]:
                 SELECT method,
                        count(*) AS total,
                        count(*) FILTER (WHERE status = 'failed') AS failed,
-                       sum(amount_paise) AS volume_paise
+                       sum(amount_minor) AS volume_minor
                   FROM payments
                  WHERE merchant_id = $1
                  GROUP BY 1 ORDER BY 1
@@ -181,7 +181,7 @@ def build_tools(pool: asyncpg.Pool, merchant_id: str) -> list[StructuredTool]:
                     "total_payments": _int(r["total"]),
                     "failed": _int(r["failed"]),
                     "failure_rate_including_incidents": round(r["failed"] / r["total"], 4),
-                    "volume": _rupees(r["volume_paise"]),
+                    "volume": _rupees(r["volume_minor"]),
                 }
                 for r in rows
             ],
@@ -207,7 +207,7 @@ def build_tools(pool: asyncpg.Pool, merchant_id: str) -> list[StructuredTool]:
             ids = (meta or {}).get("affected_payment_ids", [])[: max(1, min(limit, 100))]
             rows = await conn.fetch(
                 """
-                SELECT id, customer_id, amount_paise, method, failure_code,
+                SELECT id, customer_id, amount_minor, method, failure_code,
                        failure_reason, created_at
                   FROM payments
                  WHERE id = ANY($1::text[]) AND merchant_id = $2
@@ -221,8 +221,8 @@ def build_tools(pool: asyncpg.Pool, merchant_id: str) -> list[StructuredTool]:
                 {
                     "payment_id": r["id"],
                     "customer_id": r["customer_id"],
-                    "amount_paise": _int(r["amount_paise"]),
-                    "amount": _rupees(r["amount_paise"]),
+                    "amount_minor": _int(r["amount_minor"]),
+                    "amount": _rupees(r["amount_minor"]),
                     "method": r["method"],
                     "failure_code": r["failure_code"],
                     "failure_reason": r["failure_reason"],
@@ -238,7 +238,7 @@ def build_tools(pool: asyncpg.Pool, merchant_id: str) -> list[StructuredTool]:
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
                 """
-                SELECT id, customer_id, amount_paise, status::text AS status,
+                SELECT id, customer_id, amount_minor, status::text AS status,
                        method, failure_code, failure_reason, created_at
                   FROM payments WHERE id = $1 AND merchant_id = $2
                 """,
@@ -258,8 +258,8 @@ def build_tools(pool: asyncpg.Pool, merchant_id: str) -> list[StructuredTool]:
             {
                 "payment_id": row["id"],
                 "customer_id": row["customer_id"],
-                "amount_paise": _int(row["amount_paise"]),
-                "amount": _rupees(row["amount_paise"]),
+                "amount_minor": _int(row["amount_minor"]),
+                "amount": _rupees(row["amount_minor"]),
                 "status": row["status"],
                 "method": row["method"],
                 "failure_code": row["failure_code"],
@@ -289,8 +289,8 @@ def build_tools(pool: asyncpg.Pool, merchant_id: str) -> list[StructuredTool]:
                 SELECT count(*) AS total,
                        count(*) FILTER (WHERE status='captured') AS succeeded,
                        count(*) FILTER (WHERE status='failed') AS failed,
-                       sum(amount_paise) FILTER (WHERE status='captured')
-                           AS lifetime_paise
+                       sum(amount_minor) FILTER (WHERE status='captured')
+                           AS lifetime_minor
                   FROM payments WHERE customer_id=$1
                 """,
                 customer_id,
@@ -304,7 +304,7 @@ def build_tools(pool: asyncpg.Pool, merchant_id: str) -> list[StructuredTool]:
                 "total_payments": _int(stats["total"]),
                 "succeeded": _int(stats["succeeded"]),
                 "failed": _int(stats["failed"]),
-                "lifetime_value": _rupees(_int(stats["lifetime_paise"])),
+                "lifetime_value": _rupees(_int(stats["lifetime_minor"])),
             },
             indent=2,
         )

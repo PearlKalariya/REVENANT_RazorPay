@@ -83,8 +83,8 @@ class PolicyConfig:
     #: The LIMIT is the merchant's; so is the day it applies to.
     business_timezone: str = "Asia/Kolkata"
 
-    max_auto_amount_paise: int = 500_000  # ₹5,000
-    max_daily_recovery_paise: int = 2_500_000  # ₹25,000
+    max_auto_amount_minor: int = 500_000  # ₹5,000
+    max_daily_recovery_minor: int = 2_500_000  # ₹25,000
     max_retry_attempts: int = 2
     retry_cooldown_minutes: int = 30
     action_ttl_minutes: int = 60
@@ -105,7 +105,7 @@ class ProposedAction:
     action: ActionType
     customer_id: str
     payment_id: str
-    amount_paise: int
+    amount_minor: int
     proposed_at: datetime
 
 
@@ -116,7 +116,7 @@ class RecoveryContext:
     payment_status: PaymentStatus
     customer_opted_out: bool
     prior_attempts: int
-    recovered_today_paise: int
+    recovered_today_minor: int
     now: datetime
     last_attempt_at: datetime | None = None
 
@@ -203,9 +203,31 @@ def merchant_day_start(now: datetime, timezone_name: str) -> datetime:
     return local_midnight.astimezone(UTC)
 
 
-def _rupees(paise: int) -> str:
-    """Format paise for human-readable reasons. Display only."""
-    return f"₹{paise / 100:,.2f}".rstrip("0").rstrip(".")
+def _rupees(amount_minor: int) -> str:
+    """Deprecated alias kept for readability at existing call sites."""
+    return format_money(amount_minor)
+
+#: Minor units per major unit. Most currencies are 100; the exceptions are real
+#: (JPY has no minor unit, KWD has 1000) and getting them wrong misprices by
+#: a factor of 100 or more.
+MINOR_PER_MAJOR = {"INR": 100, "USD": 100, "GBP": 100, "EUR": 100,
+                   "JPY": 1, "KWD": 1000, "BHD": 1000}
+SYMBOLS = {"INR": "\u20b9", "USD": "$", "GBP": "\u00a3", "EUR": "\u20ac", "JPY": "\u00a5"}
+
+
+def format_money(amount_minor: int | None, currency: str = "INR") -> str:
+    """Render a minor-unit integer in its own currency.
+
+    The unit is defined by the CURRENCY, never by the field name — which is why
+    the fields are `*_minor` and not `*_paise` (decision D16). 500_000 is
+    \u20b95,000.00 in INR and $5,000.00 in USD, and the code must not assume which.
+    """
+    if amount_minor is None:
+        return "\u2014"
+    per = MINOR_PER_MAJOR.get(currency, 100)
+    symbol = SYMBOLS.get(currency, f"{currency} ")
+    major = int(amount_minor) / per if per > 1 else int(amount_minor)
+    return f"{symbol}{major:,.{2 if per > 1 else 0}f}"
 
 
 def evaluate(
@@ -258,18 +280,18 @@ def evaluate(
     is_financial = action.action in FINANCIAL_ACTIONS
 
     if is_financial:
-        if not isinstance(action.amount_paise, int) or isinstance(
-            action.amount_paise, bool
+        if not isinstance(action.amount_minor, int) or isinstance(
+            action.amount_minor, bool
         ):
             return block(
                 "invalid_amount",
                 "Amount must be an integer number of paise.",
             )
-        if action.amount_paise <= 0:
+        if action.amount_minor <= 0:
             return block(
                 "invalid_amount",
-                f"Amount must be positive, got {action.amount_paise} paise.",
-                amount_paise=action.amount_paise,
+                f"Amount must be positive, got {action.amount_minor} paise.",
+                amount_minor=action.amount_minor,
             )
 
     # --- Action freshness. An agent proposal is not valid forever. ---------
@@ -336,26 +358,26 @@ def evaluate(
     # --- Money-moving rules. Non-financial actions skip these. -------------
 
     if is_financial:
-        projected = context.recovered_today_paise + action.amount_paise
-        if projected > config.max_daily_recovery_paise:
+        projected = context.recovered_today_minor + action.amount_minor
+        if projected > config.max_daily_recovery_minor:
             return block(
                 "daily_limit_exceeded",
                 f"This action would bring today's recovery total to "
                 f"{_rupees(projected)}, above the "
-                f"{_rupees(config.max_daily_recovery_paise)} daily cap.",
-                projected_paise=projected,
-                cap_paise=config.max_daily_recovery_paise,
+                f"{_rupees(config.max_daily_recovery_minor)} daily cap.",
+                projected_minor=projected,
+                cap_minor=config.max_daily_recovery_minor,
             )
 
-        if action.amount_paise > config.max_auto_amount_paise:
+        if action.amount_minor > config.max_auto_amount_minor:
             return decide(
                 Decision.REQUIRES_APPROVAL,
                 "above_auto_threshold",
-                f"Amount {_rupees(action.amount_paise)} exceeds the "
-                f"{_rupees(config.max_auto_amount_paise)} autonomous limit. "
+                f"Amount {_rupees(action.amount_minor)} exceeds the "
+                f"{_rupees(config.max_auto_amount_minor)} autonomous limit. "
                 "Human approval required.",
-                amount_paise=action.amount_paise,
-                threshold_paise=config.max_auto_amount_paise,
+                amount_minor=action.amount_minor,
+                threshold_minor=config.max_auto_amount_minor,
             )
 
     # --- All checks passed. -------------------------------------------------
@@ -363,9 +385,9 @@ def evaluate(
     return decide(
         Decision.AUTO_APPROVED,
         "within_policy",
-        f"{action.action.value} for {_rupees(action.amount_paise)} is within all "
+        f"{action.action.value} for {_rupees(action.amount_minor)} is within all "
         "policy limits."
         if is_financial
         else f"{action.action.value} is non-financial and within policy.",
-        amount_paise=action.amount_paise,
+        amount_minor=action.amount_minor,
     )

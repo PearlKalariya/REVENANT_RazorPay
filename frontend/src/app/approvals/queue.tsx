@@ -2,7 +2,8 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { decide, label, type Decision, type RecoveryAction } from "@/lib/api";
+import { decide, label, type Decision, type RecoveryAction, moneyShort
+} from "@/lib/api";
 
 /**
  * The only screen that writes.
@@ -107,7 +108,7 @@ export function ApprovalQueue({ initial }: { initial: RecoveryAction[] }) {
             <div className="flex items-start justify-between gap-3">
               <div>
                 <div className="disp tnum leading-[.95] text-[clamp(30px,3vw,44px)]">
-                  ₹{Math.round(a.amount_paise / 100).toLocaleString("en-IN")}
+                  {moneyShort(a.amount_minor)}
                 </div>
                 <div className="mono mt-1.5 text-[11px]">
                   {a.payment_id} · {label(a.customer_id)}

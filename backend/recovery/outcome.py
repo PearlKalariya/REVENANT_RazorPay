@@ -63,7 +63,7 @@ TRUSTED_SOURCE = "razorpay"
 class OutcomeResult:
     matched: bool
     execution_id: int | None = None
-    recovered_paise: int = 0
+    recovered_minor: int = 0
     succeeded: bool = False
     counted: bool = False       # False when the event was not Razorpay-originated
     reason: str = ""
@@ -76,7 +76,7 @@ async def record_outcome(
     event_type: str,
     reference_id: str | None,
     payment_link_id: str | None,
-    amount_paise: int | None,
+    amount_minor: int | None,
     source: str,
 ) -> OutcomeResult:
     """Attribute one verified webhook to a recovery execution, if it belongs to one.
@@ -110,13 +110,13 @@ async def record_outcome(
                              reason=f"source {source!r} is not Razorpay-originated")
 
     # Rule 2. Razorpay's amount wins.
-    recovered = int(amount_paise or 0) if succeeded else 0
+    recovered = int(amount_minor or 0) if succeeded else 0
 
     # Rule 3. One outcome per execution; a webhook retry must not double-count.
     inserted = await conn.fetchval(
         """
         INSERT INTO recovery_outcomes
-            (execution_id, recovered_paise, succeeded, verified_by_event)
+            (execution_id, recovered_minor, succeeded, verified_by_event)
         VALUES ($1,$2,$3,$4)
         ON CONFLICT (execution_id) DO NOTHING
         RETURNING id
@@ -171,7 +171,7 @@ async def record_outcome(
              execution_id, recovered, succeeded)
 
     return OutcomeResult(matched=True, execution_id=execution_id,
-                         recovered_paise=recovered, succeeded=succeeded,
+                         recovered_minor=recovered, succeeded=succeeded,
                          counted=True, reason="recorded")
 
 
@@ -192,12 +192,12 @@ async def _find_execution(conn, reference_id: str | None,
 
 
 async def _audit(conn, execution_id: int, event_id: str, event_type: str,
-                 amount_paise: int, reason: str) -> None:
+                 amount_minor: int, reason: str) -> None:
     await conn.execute(
         """
         INSERT INTO audit_events
             (actor, event_type, merchant_id, customer_id, payment_id,
-             incident_id, action_id, execution_id, amount_paise, reason, metadata)
+             incident_id, action_id, execution_id, amount_minor, reason, metadata)
         SELECT 'OUTCOME_ENGINE', $2, p.merchant_id, ra.customer_id, ra.payment_id,
                ra.incident_id, ra.id, er.id, $3, $4,
                jsonb_build_object('verified_by_event', $5::text)
@@ -206,5 +206,5 @@ async def _audit(conn, execution_id: int, event_id: str, event_type: str,
           JOIN payments p ON p.id = ra.payment_id
          WHERE er.id = $1
         """,
-        execution_id, event_type, amount_paise, reason, event_id,
+        execution_id, event_type, amount_minor, reason, event_id,
     )

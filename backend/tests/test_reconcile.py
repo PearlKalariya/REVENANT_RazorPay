@@ -48,18 +48,18 @@ async def _execution(conn, *, amount=204_900, ref="plink_R1"):
     await conn.execute("INSERT INTO merchants(id,name) VALUES('m_r','R')")
     await conn.execute("INSERT INTO customers(id,merchant_id) VALUES('c_r','m_r')")
     await conn.execute(
-        "INSERT INTO payments(id,merchant_id,customer_id,amount_paise,status,"
+        "INSERT INTO payments(id,merchant_id,customer_id,amount_minor,status,"
         "method,created_at,is_synthetic)"
         " VALUES('pay_r','m_r','c_r',$1,'failed','upi',now(),TRUE)", amount)
     inc = await conn.fetchval(
         "INSERT INTO revenue_incidents(merchant_id,title) VALUES('m_r','t') RETURNING id")
     aid = await conn.fetchval(
         "INSERT INTO recovery_actions(incident_id,payment_id,customer_id,action,"
-        "amount_paise,status) VALUES($1,'pay_r','c_r','CREATE_PAYMENT_LINK',$2,"
+        "amount_minor,status) VALUES($1,'pay_r','c_r','CREATE_PAYMENT_LINK',$2,"
         "'executed') RETURNING id", inc, amount)
     return await conn.fetchval(
         "INSERT INTO execution_records(action_id,idempotency_key,status,"
-        "amount_paise,razorpay_ref) VALUES($1,$2,'succeeded',$3,$4) RETURNING id",
+        "amount_minor,razorpay_ref) VALUES($1,$2,'succeeded',$3,$4) RETURNING id",
         aid, KEY, amount, ref)
 
 
@@ -68,9 +68,9 @@ async def test_paid_link_becomes_recovered_revenue(conn):
     client = FakeClient({"plink_R1": {"status": "paid", "amount_paid": 204_900}})
     r = await reconcile_outcomes(conn, client, merchant_id="m_r")
     assert r.newly_paid == 1
-    assert r.recovered_paise == 204_900
+    assert r.recovered_minor == 204_900
     assert await conn.fetchval(
-        "SELECT recovered_paise FROM recovery_outcomes WHERE execution_id=$1",
+        "SELECT recovered_minor FROM recovery_outcomes WHERE execution_id=$1",
         exec_id) == 204_900
 
 
@@ -79,7 +79,7 @@ async def test_amount_comes_from_razorpay_not_from_us(conn):
     await _execution(conn, amount=204_900)
     client = FakeClient({"plink_R1": {"status": "paid", "amount_paid": 100_000}})
     r = await reconcile_outcomes(conn, client, merchant_id="m_r")
-    assert r.recovered_paise == 100_000
+    assert r.recovered_minor == 100_000
 
 
 async def test_unpaid_link_recovers_nothing(conn):
@@ -87,7 +87,7 @@ async def test_unpaid_link_recovers_nothing(conn):
     client = FakeClient({"plink_R1": {"status": "created", "amount": 204_900}})
     r = await reconcile_outcomes(conn, client, merchant_id="m_r")
     assert r.newly_paid == 0
-    assert r.recovered_paise == 0
+    assert r.recovered_minor == 0
     # Scoped to THIS execution. A global count picks up real reconciled
     # outcomes committed outside this test's transaction.
     assert await conn.fetchval(
@@ -102,9 +102,9 @@ async def test_expired_link_records_a_zero_outcome(conn):
     r = await reconcile_outcomes(conn, client, merchant_id="m_r")
     assert r.newly_closed == 1
     row = await conn.fetchrow(
-        "SELECT recovered_paise, succeeded FROM recovery_outcomes"
+        "SELECT recovered_minor, succeeded FROM recovery_outcomes"
         " WHERE execution_id=$1", exec_id)
-    assert row["recovered_paise"] == 0
+    assert row["recovered_minor"] == 0
     assert row["succeeded"] is False
 
 
@@ -122,7 +122,7 @@ async def test_reconciliation_does_not_double_count(conn):
     await reconcile_outcomes(conn, client, merchant_id="m_r")
     await reconcile_outcomes(conn, client, merchant_id="m_r")
     total = await conn.fetchval(
-        "SELECT coalesce(sum(recovered_paise),0) FROM recovery_outcomes"
+        "SELECT coalesce(sum(recovered_minor),0) FROM recovery_outcomes"
         " WHERE execution_id=$1", exec_id)
     assert total == 204_900
     assert await conn.fetchval(

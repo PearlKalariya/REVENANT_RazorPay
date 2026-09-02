@@ -1,5 +1,6 @@
 from .engine import (
     EvaluationPhase,
+    format_money,
     policy_hash,
     current_merchant_day,
     merchant_day_start,
@@ -23,6 +24,7 @@ from .merchant import (
 
 __all__ = [
     "EvaluationPhase",
+    "format_money",
     "policy_hash",
     "MerchantConfig",
     "MerchantConfigError",

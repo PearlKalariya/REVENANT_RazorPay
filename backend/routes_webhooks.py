@@ -49,7 +49,7 @@ async def _apply_outcome(conn, result: str, event, event_id: str, source: str):
         event_type=event.event_type,
         reference_id=event.reference_id,
         payment_link_id=event.payment_link_id,
-        amount_paise=event.amount_paise,
+        amount_minor=event.amount_minor,
         source=source,
     )
 
@@ -115,7 +115,7 @@ async def razorpay_webhook(
         "recovery": None if outcome is None else {
             "matched": outcome.matched,
             "execution_id": outcome.execution_id,
-            "recovered_paise": outcome.recovered_paise,
+            "recovered_minor": outcome.recovered_minor,
             "counted": outcome.counted,
             "reason": outcome.reason,
         },
@@ -171,7 +171,7 @@ async def replay_webhook(request: Request, response: Response):
             "matched": outcome.matched,
             "execution_id": outcome.execution_id,
             # Always 0 for a replay: it cannot prove a customer paid.
-            "recovered_paise": outcome.recovered_paise,
+            "recovered_minor": outcome.recovered_minor,
             "counted": outcome.counted,
             "reason": outcome.reason,
         },

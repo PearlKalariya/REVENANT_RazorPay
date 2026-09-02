@@ -1,6 +1,6 @@
 import { Header, DataNote, SectionRule } from "@/components/chrome";
 import { AuditTicker } from "@/components/ticker";
-import { getIncidents, getActions, label, rupeesShort, type Incident, type RecoveryAction } from "@/lib/api";
+import { getIncidents, getActions, label, moneyShort, type Incident, type RecoveryAction } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +22,7 @@ export default async function Incidents() {
 
   const incident = incidents[0];
   const recovered = actions.filter((a) => a.recovered);
-  const recoveredPaise = recovered.reduce((s, a) => s + a.recovered_paise, 0);
+  const recoveredPaise = recovered.reduce((s, a) => s + a.recovered_minor, 0);
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -38,9 +38,9 @@ export default async function Incidents() {
               </span>
               <h1 className="disp mt-3 text-[clamp(28px,3.8vw,50px)] uppercase">{incident.title}</h1>
               <div className="mt-4 flex flex-wrap gap-9">
-                <Fig v={rupeesShort(incident.revenue_at_risk_paise)} k="AT RISK" />
+                <Fig v={moneyShort(incident.revenue_at_risk_minor)} k="AT RISK" />
                 <Fig v={String(incident.affected_count)} k="AFFECTED" />
-                <Fig v={rupeesShort(recoveredPaise)} k="RECOVERED SO FAR" />
+                <Fig v={moneyShort(recoveredPaise)} k="RECOVERED SO FAR" />
                 <Fig v={label(incident.status)} k="STATUS" />
               </div>
             </div>
@@ -76,7 +76,7 @@ export default async function Incidents() {
                     <div key={a.id} className="flex items-center justify-between border-b-2 border-dotted border-ink/40 py-2.5">
                       <span className="mono text-[12px]">{a.payment_id}</span>
                       <span className="mono tnum text-[13.5px] font-bold text-recovered">
-                        {rupeesShort(a.recovered_paise)}
+                        {moneyShort(a.recovered_minor)}
                       </span>
                     </div>
                   ))}

@@ -1,5 +1,5 @@
 import { Header, DataNote, SectionRule } from "@/components/chrome";
-import { getAudit, label, rupees, clockIST, type AuditEvent } from "@/lib/api";
+import { getAudit, label, money, clockIST, type AuditEvent } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
@@ -61,8 +61,8 @@ export default async function Audit() {
               <span className={`mono shrink-0 px-2 py-0.5 text-[11px] font-bold ${TONE[e.event_type] ?? "bg-paper-deep"}`}>
                 {label(e.event_type)}
               </span>
-              {e.amount_paise !== null && (
-                <span className="mono tnum shrink-0 text-[13px] font-bold">{rupees(e.amount_paise)}</span>
+              {e.amount_minor !== null && (
+                <span className="mono tnum shrink-0 text-[13px] font-bold">{money(e.amount_minor)}</span>
               )}
               {e.payment_id && <span className="mono text-[11.5px] text-ink/55">{e.payment_id}</span>}
               {e.reason && <span className="text-[13px] text-ink/80">{e.reason}</span>}

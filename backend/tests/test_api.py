@@ -119,17 +119,17 @@ def test_metrics_separate_attempted_from_recovered(client):
     """Attempted and recovered are different facts. Conflating them is the
     easiest way to overstate what the system achieved."""
     m = client.get("/metrics").json()
-    assert "recovery_attempted_paise" in m
-    assert "recovered_paise" in m
-    assert m["recovered_paise"] <= m["recovery_attempted_paise"]
+    assert "recovery_attempted_minor" in m
+    assert "recovered_minor" in m
+    assert m["recovered_minor"] <= m["recovery_attempted_minor"]
 
 
 def test_recovery_rate_is_against_attempted_not_at_risk(client):
     """A rate computed against at-risk money would credit the system for
     transactions it never acted on."""
     m = client.get("/metrics").json()
-    if m["recovery_attempted_paise"]:
-        expected = round(m["recovered_paise"] / m["recovery_attempted_paise"], 4)
+    if m["recovery_attempted_minor"]:
+        expected = round(m["recovered_minor"] / m["recovery_attempted_minor"], 4)
         assert m["recovery_rate_of_attempted"] == expected
 
 

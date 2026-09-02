@@ -32,7 +32,7 @@ async def action_provenance(conn: asyncpg.Connection, action_id: int) -> dict | 
     """Full policy provenance for one action, or None if unknown."""
     action = await conn.fetchrow(
         """
-        SELECT ra.id, ra.amount_paise, ra.status::text AS status,
+        SELECT ra.id, ra.amount_minor, ra.status::text AS status,
                ra.payment_id, ra.customer_id, ra.action::text AS action
           FROM recovery_actions ra WHERE ra.id = $1
         """,
@@ -91,7 +91,7 @@ async def action_provenance(conn: asyncpg.Connection, action_id: int) -> dict | 
         "action_id": action["id"],
         "payment_id": action["payment_id"],
         "customer_id": action["customer_id"],
-        "amount_paise": int(action["amount_paise"]),
+        "amount_minor": int(action["amount_minor"]),
         # Explicit field names throughout: a generic "policy_version" would be
         # ambiguous about WHICH evaluation it describes.
         "authorization": None if auth is None else {

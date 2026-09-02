@@ -41,7 +41,7 @@ from ..policy import (
 class RecoveryCandidate:
     payment_id: str
     customer_id: str
-    amount_paise: int
+    amount_minor: int
     failure_reason: str | None
     method: str
     action: ProposedAction
@@ -79,10 +79,10 @@ class RecoveryPlan:
         return [c for c in self.candidates if c.is_blocked]
 
     @property
-    def recoverable_paise(self) -> int:
+    def recoverable_minor(self) -> int:
         """Money that could move if every approval were granted. NOT a claim
         that it will be recovered."""
-        return sum(c.amount_paise for c in self.auto + self.approval)
+        return sum(c.amount_minor for c in self.auto + self.approval)
 
     def blocked_by_rule(self) -> dict[str, int]:
         out: dict[str, int] = {}
@@ -150,7 +150,7 @@ async def build_plan(
 
     rows = await conn.fetch(
         """
-        SELECT p.id, p.customer_id, p.amount_paise, p.status::text AS status,
+        SELECT p.id, p.customer_id, p.amount_minor, p.status::text AS status,
                p.method, p.failure_reason, p.created_at, c.opted_out,
                (SELECT count(*) FROM recovery_actions ra
                  WHERE ra.payment_id = p.id) AS prior_attempts,
@@ -163,17 +163,17 @@ async def build_plan(
           FROM payments p
           JOIN customers c ON c.id = p.customer_id
          WHERE p.merchant_id = $1 AND p.status = 'failed'
-         ORDER BY p.amount_paise DESC, p.id
+         ORDER BY p.amount_minor DESC, p.id
         """,
         merchant_id,
     )
 
     # Shared with the executor. Two different definitions of "spent today" is
     # how a cap gets breached while both sides believe they are within it.
-    from .executor import daily_committed_paise
+    from .executor import daily_committed_minor
 
-    recovered_today = await daily_committed_paise(
-        conn, now, config.business_timezone)
+    recovered_today = await daily_committed_minor(
+        conn, now, config.business_timezone, merchant_id)
 
     candidates: list[RecoveryCandidate] = []
     running_total = recovered_today
@@ -182,13 +182,13 @@ async def build_plan(
         if not _matches(r["failure_reason"], r["method"], strategy):
             continue
 
-        amount = int(r["amount_paise"])
+        amount = int(r["amount_minor"])
         proposed = ProposedAction(
             action=action_type or ActionType.CREATE_PAYMENT_LINK,
             customer_id=r["customer_id"],
             payment_id=r["id"],
             # Amount is read from the database. The model never supplies one.
-            amount_paise=amount,
+            amount_minor=amount,
             proposed_at=now,
         )
 
@@ -199,7 +199,7 @@ async def build_plan(
             last_attempt_at=r["last_attempt_at"],
             # Threaded forward: a batch of individually-fine actions must not
             # collectively exceed the daily cap.
-            recovered_today_paise=running_total,
+            recovered_today_minor=running_total,
             now=now,
         )
 
@@ -222,7 +222,7 @@ async def build_plan(
             RecoveryCandidate(
                 payment_id=r["id"],
                 customer_id=r["customer_id"],
-                amount_paise=amount,
+                amount_minor=amount,
                 failure_reason=r["failure_reason"],
                 method=r["method"],
                 action=proposed,

@@ -40,7 +40,7 @@ class FakeRazorpay:
         if self.fail:
             raise self.fail
         return PaymentLink(id="plink_FAKE", short_url="https://rzp.io/x",
-                           status="created", amount_paise=kw["amount_paise"],
+                           status="created", amount_minor=kw["amount_minor"],
                            reference_id=kw["reference_id"])
 
 
@@ -68,7 +68,7 @@ async def _fixture(conn, *, policy="AUTO_APPROVED", status="approved",
         "INSERT INTO customers(id,merchant_id,email,phone,opted_out)"
         " VALUES('c_x','m_x','a@b.test','+919800000000',$1)", opted_out)
     await conn.execute(
-        "INSERT INTO payments(id,merchant_id,customer_id,amount_paise,status,"
+        "INSERT INTO payments(id,merchant_id,customer_id,amount_minor,status,"
         "method,created_at,is_synthetic)"
         " VALUES('pay_x','m_x','c_x',$1,$2::payment_status,'upi',$3,TRUE)",
         amount, payment_status, NOW - timedelta(hours=2))
@@ -77,7 +77,7 @@ async def _fixture(conn, *, policy="AUTO_APPROVED", status="approved",
         " RETURNING id")
     aid = await conn.fetchval(
         "INSERT INTO recovery_actions(incident_id,payment_id,customer_id,action,"
-        "amount_paise,status,proposed_at,expires_at)"
+        "amount_minor,status,proposed_at,expires_at)"
         " VALUES($1,'pay_x','c_x','CREATE_PAYMENT_LINK',$2,$3::action_status,$4,$5)"
         " RETURNING id",
         inc, amount, status, NOW,
@@ -88,7 +88,7 @@ async def _fixture(conn, *, policy="AUTO_APPROVED", status="approved",
         " VALUES($1,'authorization',$2::policy_result,'r','because','v1',"
         "'hash_authorization_v1',$3,$4)",
         aid, policy,
-        json.dumps({"amount_paise": ruled_amount if ruled_amount is not None else amount}),
+        json.dumps({"amount_minor": ruled_amount if ruled_amount is not None else amount}),
         NOW)
     if approval is not None:
         await conn.execute(
@@ -300,12 +300,12 @@ async def test_daily_cap_enforced_at_execution_time(conn):
     the daily cap."""
     from backend.policy import PolicyConfig
 
-    config = PolicyConfig(max_daily_recovery_paise=50_000)
+    config = PolicyConfig(max_daily_recovery_minor=50_000)
     aid = await _fixture(conn, amount=30_000)
     # Another execution already committed most of today's budget.
     await conn.execute(
         "INSERT INTO execution_records(action_id,idempotency_key,status,"
-        "amount_paise,created_at)"
+        "amount_minor,created_at)"
         " VALUES($1,'rv_other000000000000000000000000','succeeded',$2,$3)",
         aid, 30_000, NOW)
 
@@ -324,11 +324,11 @@ async def test_pending_executions_count_against_the_cap(conn):
     we are least sure about."""
     from backend.policy import PolicyConfig
 
-    config = PolicyConfig(max_daily_recovery_paise=50_000)
+    config = PolicyConfig(max_daily_recovery_minor=50_000)
     aid = await _fixture(conn, amount=30_000)
     await conn.execute(
         "INSERT INTO execution_records(action_id,idempotency_key,status,"
-        "amount_paise,created_at)"
+        "amount_minor,created_at)"
         " VALUES($1,'rv_pending0000000000000000000000','pending',$2,$3)",
         aid, 30_000, NOW)
 
@@ -386,13 +386,13 @@ async def test_lost_race_returns_winners_result_not_an_error(conn):
 
     aid = await _fixture(conn)
     row = await conn.fetchrow(
-        "SELECT amount_paise FROM recovery_actions WHERE id=$1", aid)
-    key = idempotency_key(aid, int(row["amount_paise"]), "v1")
+        "SELECT amount_minor FROM recovery_actions WHERE id=$1", aid)
+    key = idempotency_key(aid, int(row["amount_minor"]), "v1")
     # A competing worker claims the key first.
     winner_id = await conn.fetchval(
         "INSERT INTO execution_records(action_id,idempotency_key,status,"
-        "amount_paise) VALUES($1,$2,'succeeded',$3) RETURNING id",
-        aid, key, int(row["amount_paise"]))
+        "amount_minor) VALUES($1,$2,'succeeded',$3) RETURNING id",
+        aid, key, int(row["amount_minor"]))
 
     result, client = await _run(conn, aid)
     assert result.reused is True
@@ -424,7 +424,7 @@ async def test_daily_window_follows_the_merchants_timezone(conn):
     from datetime import timedelta as _td
     from datetime import timezone as _tz
 
-    from backend.recovery.executor import daily_committed_paise
+    from backend.recovery.executor import daily_committed_minor
 
     IST = _tz(_td(hours=5, minutes=30))
     aid = await _fixture(conn, amount=1_000)
@@ -433,11 +433,11 @@ async def test_daily_window_follows_the_merchants_timezone(conn):
     later = datetime(2026, 8, 29, 11, 0, tzinfo=IST)    # same IST day
     await conn.execute(
         "INSERT INTO execution_records(action_id,idempotency_key,status,"
-        "amount_paise,created_at) VALUES($1,'rv_tzcheck0000000000000000000000',"
+        "amount_minor,created_at) VALUES($1,'rv_tzcheck0000000000000000000000',"
         "'succeeded',$2,$3)", aid, 5_000, early)
 
-    in_ist = await daily_committed_paise(conn, later, "Asia/Kolkata")
-    in_utc = await daily_committed_paise(conn, later, "UTC")
+    in_ist = await daily_committed_minor(conn, later, "Asia/Kolkata", "m_x")
+    in_utc = await daily_committed_minor(conn, later, "UTC", "m_x")
     assert in_ist >= 5_000, "IST window must include spend from earlier the same day"
     assert in_utc < in_ist, "UTC window drops early-IST spend — this is the bug"
 
@@ -460,3 +460,24 @@ async def test_razorpay_rate_limit_is_retryable_not_failed(conn):
                                              retryable=True))
     result, _ = await _run(conn, aid, client)
     assert result.status == "pending", "a throttled call must not be marked failed"
+
+
+async def test_daily_cap_is_scoped_to_one_merchant(conn):
+    """One merchant's recoveries must not consume another merchant's cap.
+
+    This summed the whole execution_records table, so a busy merchant could
+    silently exhaust a quiet one's daily limit. D14 made the limits
+    per-merchant; the spend measured against them has to be too.
+    """
+    from backend.recovery.executor import daily_committed_minor
+
+    aid = await _fixture(conn, amount=10_000)
+    await conn.execute(
+        "INSERT INTO execution_records(action_id,idempotency_key,status,"
+        "amount_minor,created_at) VALUES($1,'rv_scope00000000000000000000000',"
+        "'succeeded',900_000,$2)", aid, NOW)
+
+    mine = await daily_committed_minor(conn, NOW, "Asia/Kolkata", "m_x")
+    theirs = await daily_committed_minor(conn, NOW, "Asia/Kolkata", "m_someone_else")
+    assert mine >= 900_000, "the merchant's own spend must count"
+    assert theirs == 0, "another merchant's spend must not"

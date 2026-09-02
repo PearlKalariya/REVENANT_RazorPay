@@ -48,7 +48,7 @@ class PaymentLink:
     id: str
     short_url: str
     status: str
-    amount_paise: int
+    amount_minor: int
     reference_id: str
 
 
@@ -124,7 +124,7 @@ class RazorpayClient:
     async def create_payment_link(
         self,
         *,
-        amount_paise: int,
+        amount_minor: int,
         reference_id: str,
         description: str,
         customer_name: str | None = None,
@@ -149,13 +149,13 @@ class RazorpayClient:
                 f"can only settle {sorted(SUPPORTED_CURRENCIES)}. Refusing "
                 "rather than charging in the wrong currency."
             )
-        if not isinstance(amount_paise, int) or isinstance(amount_paise, bool):
-            raise RazorpayError("amount_paise must be an integer.")
-        if amount_paise <= 0:
-            raise RazorpayError("amount_paise must be positive.")
+        if not isinstance(amount_minor, int) or isinstance(amount_minor, bool):
+            raise RazorpayError("amount_minor must be an integer.")
+        if amount_minor <= 0:
+            raise RazorpayError("amount_minor must be positive.")
 
         payload: dict = {
-            "amount": amount_paise,
+            "amount": amount_minor,
             "currency": currency,
             "accept_partial": False,
             "description": description[:255],
@@ -184,7 +184,7 @@ class RazorpayClient:
             id=data["id"],
             short_url=data["short_url"],
             status=data["status"],
-            amount_paise=data["amount"],
+            amount_minor=data["amount"],
             reference_id=data.get("reference_id", reference_id),
         )
 

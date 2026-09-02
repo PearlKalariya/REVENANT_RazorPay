@@ -28,7 +28,7 @@ class Fake:
     async def create_payment_link(self, **kw):
         self.calls.append(kw)
         return PaymentLink(id="plink_x", short_url="u", status="created",
-                           amount_paise=kw["amount_paise"],
+                           amount_minor=kw["amount_minor"],
                            reference_id=kw["reference_id"])
 
 
@@ -53,14 +53,14 @@ async def _authorized_action(conn, *, amount=204_900, config=None):
     await conn.execute("INSERT INTO merchants(id,name) VALUES('m_p','P')")
     await conn.execute("INSERT INTO customers(id,merchant_id,email) VALUES('c_p','m_p','a@b.test')")
     await conn.execute(
-        "INSERT INTO payments(id,merchant_id,customer_id,amount_paise,status,"
+        "INSERT INTO payments(id,merchant_id,customer_id,amount_minor,status,"
         "method,created_at,is_synthetic)"
         " VALUES('pay_p','m_p','c_p',$1,'failed','upi',$2,TRUE)", amount, PLANNED)
     inc = await conn.fetchval(
         "INSERT INTO revenue_incidents(merchant_id,title) VALUES('m_p','t') RETURNING id")
     aid = await conn.fetchval(
         "INSERT INTO recovery_actions(incident_id,payment_id,customer_id,action,"
-        "amount_paise,status,proposed_at,expires_at)"
+        "amount_minor,status,proposed_at,expires_at)"
         " VALUES($1,'pay_p','c_p','CREATE_PAYMENT_LINK',$2,'approved',$3,$4)"
         " RETURNING id",
         inc, amount, PLANNED, PLANNED + timedelta(days=7))
@@ -69,7 +69,7 @@ async def _authorized_action(conn, *, amount=204_900, config=None):
         "policy_version,policy_hash,metadata,evaluated_at)"
         " VALUES($1,'authorization','AUTO_APPROVED','within_policy','ok',$2,$3,$4,$5)",
         aid, config.version, policy_hash(config),
-        json.dumps({"amount_paise": amount}), PLANNED)
+        json.dumps({"amount_minor": amount}), PLANNED)
     return aid
 
 
@@ -83,14 +83,14 @@ def _long_ttl(**kw):
 async def test_execution_decision_never_overwrites_authorization(conn):
     """The scenario: authorized under v3 at 10:02, refused under a tightened v4
     the next day. BOTH must survive in the record."""
-    v3 = _long_ttl(version="v3", max_daily_recovery_paise=2_500_000)
-    v4 = _long_ttl(version="v4", max_daily_recovery_paise=2_000_000)
+    v3 = _long_ttl(version="v3", max_daily_recovery_minor=2_500_000)
+    v4 = _long_ttl(version="v4", max_daily_recovery_minor=2_000_000)
     aid = await _authorized_action(conn, config=v3)
 
     # Other recovery consumed most of the day's tightened budget.
     await conn.execute(
         "INSERT INTO execution_records(action_id,idempotency_key,status,"
-        "amount_paise,created_at) VALUES($1,'rv_used0000000000000000000000000',"
+        "amount_minor,created_at) VALUES($1,'rv_used0000000000000000000000000',"
         "'succeeded',1_982_200,$2)", aid, RUN_AT - timedelta(hours=4))
 
     with pytest.raises(ExecutionRefused) as e:
@@ -109,12 +109,12 @@ async def test_execution_decision_never_overwrites_authorization(conn):
 
 
 async def test_hashes_differ_when_policy_changed(conn):
-    v3 = _long_ttl(version="v3", max_daily_recovery_paise=2_500_000)
-    v4 = _long_ttl(version="v4", max_daily_recovery_paise=2_000_000)
+    v3 = _long_ttl(version="v3", max_daily_recovery_minor=2_500_000)
+    v4 = _long_ttl(version="v4", max_daily_recovery_minor=2_000_000)
     aid = await _authorized_action(conn, config=v3)
     await conn.execute(
         "INSERT INTO execution_records(action_id,idempotency_key,status,"
-        "amount_paise,created_at) VALUES($1,'rv_used1000000000000000000000000',"
+        "amount_minor,created_at) VALUES($1,'rv_used1000000000000000000000000',"
         "'succeeded',1_982_200,$2)", aid, RUN_AT - timedelta(hours=4))
     with pytest.raises(ExecutionRefused):
         await execute_action(conn, Fake(), action_id=aid, merchant_id="m_p",
@@ -201,7 +201,7 @@ def test_hash_is_stable_and_value_sensitive():
     a = PolicyConfig(version="v3")
     assert policy_hash(a) == policy_hash(PolicyConfig(version="v3"))
     assert policy_hash(a) != policy_hash(PolicyConfig(version="v3",
-                                                      max_daily_recovery_paise=1))
+                                                      max_daily_recovery_minor=1))
     # A version bump alone is still a different snapshot.
     assert policy_hash(a) != policy_hash(PolicyConfig(version="v4"))
 

@@ -21,6 +21,8 @@ import json
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
 
 from . import db
+from .policy import format_money
+from .policy import load_merchant_config
 from .config import get_settings
 from .integrations.razorpay_client import RazorpayClient, RazorpayError
 from .recovery.executor import ExecutionRefused, execute_action
@@ -33,8 +35,9 @@ router = APIRouter()
 DEMO_MERCHANT = "m_demo"
 
 
-def _rupees(paise) -> str:
-    return f"₹{int(paise or 0) / 100:,.2f}"
+def _rupees(amount_minor, currency: str = "INR") -> str:
+    """Display helper. The unit comes from the currency, not the field name."""
+    return format_money(amount_minor, currency)
 
 
 @router.get("/incidents")
@@ -43,7 +46,7 @@ async def list_incidents():
         rows = await conn.fetch(
             """
             SELECT i.id, i.title, i.status::text AS status,
-                   i.revenue_at_risk_paise, i.affected_count, i.detected_at,
+                   i.revenue_at_risk_minor, i.affected_count, i.detected_at,
                    inv.root_cause, inv.confidence
               FROM revenue_incidents i
               LEFT JOIN LATERAL (
@@ -51,15 +54,15 @@ async def list_incidents():
                      WHERE incident_id = i.id ORDER BY id DESC LIMIT 1
               ) inv ON TRUE
              WHERE i.merchant_id = $1
-             ORDER BY i.revenue_at_risk_paise DESC
+             ORDER BY i.revenue_at_risk_minor DESC
             """,
             DEMO_MERCHANT,
         )
     return {"incidents": [
         {
             "id": r["id"], "title": r["title"], "status": r["status"],
-            "revenue_at_risk_paise": int(r["revenue_at_risk_paise"]),
-            "revenue_at_risk": _rupees(r["revenue_at_risk_paise"]),
+            "revenue_at_risk_minor": int(r["revenue_at_risk_minor"]),
+            "revenue_at_risk": _rupees(r["revenue_at_risk_minor"]),
             "affected_count": r["affected_count"],
             "detected_at": r["detected_at"].isoformat(),
             "root_cause": r["root_cause"],
@@ -73,7 +76,7 @@ async def get_incident(incident_id: int):
     async with db.pool().acquire() as conn:
         incident = await conn.fetchrow(
             """
-            SELECT id, title, status::text AS status, revenue_at_risk_paise,
+            SELECT id, title, status::text AS status, revenue_at_risk_minor,
                    affected_count, detected_at, resolved_at
               FROM revenue_incidents WHERE id=$1 AND merchant_id=$2
             """, incident_id, DEMO_MERCHANT)
@@ -99,8 +102,8 @@ async def get_incident(incident_id: int):
         "id": incident["id"],
         "title": incident["title"],
         "status": incident["status"],
-        "revenue_at_risk_paise": int(incident["revenue_at_risk_paise"]),
-        "revenue_at_risk": _rupees(incident["revenue_at_risk_paise"]),
+        "revenue_at_risk_minor": int(incident["revenue_at_risk_minor"]),
+        "revenue_at_risk": _rupees(incident["revenue_at_risk_minor"]),
         "affected_count": incident["affected_count"],
         "detected_at": incident["detected_at"].isoformat(),
         "investigation": None if investigation is None else {
@@ -121,12 +124,12 @@ async def list_recovery_actions(status_filter: str | None = None):
         rows = await conn.fetch(
             """
             SELECT ra.id, ra.payment_id, ra.customer_id, ra.action::text AS action,
-                   ra.amount_paise, ra.status::text AS status, ra.recovery_score,
+                   ra.amount_minor, ra.status::text AS status, ra.recovery_score,
                    ra.rationale, ra.proposed_at, ra.expires_at,
                    pd.result::text AS policy_result, pd.rule AS policy_rule,
                    pd.policy_version AS authorized_policy_version,
                    er.status::text AS execution_status, er.razorpay_short_url,
-                   ro.recovered_paise, ro.succeeded AS outcome_succeeded
+                   ro.recovered_minor, ro.succeeded AS outcome_succeeded
               FROM recovery_actions ra
               JOIN revenue_incidents i ON i.id = ra.incident_id
               LEFT JOIN policy_decisions pd
@@ -144,8 +147,8 @@ async def list_recovery_actions(status_filter: str | None = None):
         {
             "id": r["id"], "payment_id": r["payment_id"],
             "customer_id": r["customer_id"], "action": r["action"],
-            "amount_paise": int(r["amount_paise"]),
-            "amount": _rupees(r["amount_paise"]),
+            "amount_minor": int(r["amount_minor"]),
+            "amount": _rupees(r["amount_minor"]),
             "status": r["status"],
             "recovery_score": r["recovery_score"],
             "rationale": r["rationale"],
@@ -156,7 +159,7 @@ async def list_recovery_actions(status_filter: str | None = None):
             "execution_status": r["execution_status"],
             "payment_link": r["razorpay_short_url"],
             # Only a verified webhook produces this.
-            "recovered_paise": int(r["recovered_paise"] or 0),
+            "recovered_minor": int(r["recovered_minor"] or 0),
             "recovered": r["outcome_succeeded"] is True,
             "proposed_at": r["proposed_at"].isoformat(),
         } for r in rows
@@ -178,7 +181,7 @@ async def _decide(action_id: int, approved: bool, approver: str, note: str | Non
     async with db.pool().acquire() as conn:
         row = await conn.fetchrow(
             """
-            SELECT ra.id, ra.status::text AS status, ra.amount_paise,
+            SELECT ra.id, ra.status::text AS status, ra.amount_minor,
                    ra.customer_id, ra.payment_id, ra.incident_id
               FROM recovery_actions ra
               JOIN revenue_incidents i ON i.id = ra.incident_id
@@ -212,14 +215,14 @@ async def _decide(action_id: int, approved: bool, approver: str, note: str | Non
                 """
                 INSERT INTO audit_events
                     (actor, event_type, merchant_id, customer_id, payment_id,
-                     incident_id, action_id, approval_id, amount_paise, reason)
+                     incident_id, action_id, approval_id, amount_minor, reason)
                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
                 """,
                 f"HUMAN:{approver}",
                 "APPROVAL_GRANTED" if approved else "APPROVAL_DENIED",
                 DEMO_MERCHANT, row["customer_id"], row["payment_id"],
                 row["incident_id"], action_id, inserted,
-                int(row["amount_paise"]), note or "")
+                int(row["amount_minor"]), note or "")
 
     if not approved:
         return {
@@ -312,7 +315,7 @@ async def audit_trail(limit: int = 100, action_id: int | None = None,
         rows = await conn.fetch(
             """
             SELECT ts, actor, event_type, customer_id, payment_id, incident_id,
-                   action_id, execution_id, amount_paise, policy_version,
+                   action_id, execution_id, amount_minor, policy_version,
                    policy_result::text AS policy_result, reason, error, metadata
               FROM audit_events
              WHERE ($2::bigint IS NULL OR action_id = $2)
@@ -326,7 +329,7 @@ async def audit_trail(limit: int = 100, action_id: int | None = None,
             "customer_id": r["customer_id"], "payment_id": r["payment_id"],
             "incident_id": r["incident_id"], "action_id": r["action_id"],
             "execution_id": r["execution_id"],
-            "amount_paise": int(r["amount_paise"]) if r["amount_paise"] else None,
+            "amount_minor": int(r["amount_minor"]) if r["amount_minor"] else None,
             "policy_version": r["policy_version"],
             "policy_result": r["policy_result"],
             "reason": r["reason"], "error": r["error"],
@@ -344,22 +347,25 @@ async def metrics():
     generates itself.
     """
     async with db.pool().acquire() as conn:
+        # The currency is the merchant's, read from configuration — the client
+        # must never infer it from a field name (D16).
+        _currency = (await load_merchant_config(conn, DEMO_MERCHANT)).currency
         at_risk = int(await conn.fetchval(
-            "SELECT coalesce(sum(amount_paise),0) FROM payments"
+            "SELECT coalesce(sum(amount_minor),0) FROM payments"
             " WHERE merchant_id=$1 AND status='failed'", DEMO_MERCHANT) or 0)
         actions = await conn.fetch(
             """
             SELECT ra.status::text AS status, count(*) n,
-                   coalesce(sum(ra.amount_paise),0) paise
+                   coalesce(sum(ra.amount_minor),0) paise
               FROM recovery_actions ra
               JOIN revenue_incidents i ON i.id = ra.incident_id
              WHERE i.merchant_id=$1 GROUP BY 1
             """, DEMO_MERCHANT)
         attempted = int(await conn.fetchval(
-            "SELECT coalesce(sum(amount_paise),0) FROM execution_records"
+            "SELECT coalesce(sum(amount_minor),0) FROM execution_records"
             " WHERE status IN ('succeeded','pending')") or 0)
         recovered = int(await conn.fetchval(
-            "SELECT coalesce(sum(recovered_paise),0) FROM recovery_outcomes"
+            "SELECT coalesce(sum(recovered_minor),0) FROM recovery_outcomes"
             " WHERE succeeded") or 0)
         outcomes = int(await conn.fetchval(
             "SELECT count(*) FROM recovery_outcomes WHERE succeeded") or 0)
@@ -376,13 +382,15 @@ async def metrics():
                  for r in actions}
     return {
         "data_source": "SYNTHETIC TEST DATA",
-        "revenue_at_risk_paise": at_risk,
+        # The unit is defined by the currency, never by a field name (D16).
+        "currency": _currency,
+        "revenue_at_risk_minor": at_risk,
         "revenue_at_risk": _rupees(at_risk),
         "actions_by_status": by_status,
         "payment_links_issued": links,
-        "recovery_attempted_paise": attempted,
+        "recovery_attempted_minor": attempted,
         "recovery_attempted": _rupees(attempted),
-        "recovered_paise": recovered,
+        "recovered_minor": recovered,
         "recovered": _rupees(recovered),
         "recovered_count": outcomes,
         # Deliberately computed against ATTEMPTED, not at-risk: claiming a rate

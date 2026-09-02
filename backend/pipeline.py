@@ -34,7 +34,7 @@ from .agents.repository import (
 from .config import get_settings
 from .detection.repository import scan_and_persist
 from .integrations.razorpay_client import RazorpayClient
-from .policy import load_merchant_config
+from .policy import format_money, load_merchant_config
 from .recovery.candidates import build_plan
 from .recovery.executor import (
     ExecutionRefused,
@@ -53,7 +53,7 @@ RAZORPAY_PACING_SECONDS = 2.5
 @dataclass
 class BatchResult:
     incidents: int = 0
-    revenue_at_risk_paise: int = 0
+    revenue_at_risk_minor: int = 0
     candidates: int = 0
     auto_approved: int = 0
     requires_approval: int = 0
@@ -63,11 +63,11 @@ class BatchResult:
     execution_pending: int = 0
     execution_failed: int = 0
     refused_at_execution: dict[str, int] = field(default_factory=dict)
-    attempted_paise: int = 0
+    attempted_minor: int = 0
     #: Money PROVEN recovered — set by the Outcome Engine from verified
     #: Razorpay webhooks only. Zero here does NOT mean failure: it means no
     #: customer has paid a link yet.
-    recovered_paise: int = 0
+    recovered_minor: int = 0
     links: list[str] = field(default_factory=list)
 
 
@@ -89,8 +89,8 @@ async def run_batch(
         # --- 1. detection (deterministic) ---------------------------------
         detected = await scan_and_persist(conn, merchant_id)
         result.incidents = len(detected)
-        result.revenue_at_risk_paise = sum(
-            inc.revenue_at_risk_paise for _, inc, _ in detected)
+        result.revenue_at_risk_minor = sum(
+            inc.revenue_at_risk_minor for _, inc, _ in detected)
         if not detected:
             return result
 
@@ -219,7 +219,7 @@ async def run_batch(
         reconciled = await reconcile_outcomes(conn, client, merchant_id=merchant_id)
     if reconciled.newly_paid:
         log.info("pipeline.reconciled newly_paid=%d recovered=%d",
-                 reconciled.newly_paid, reconciled.recovered_paise)
+                 reconciled.newly_paid, reconciled.recovered_minor)
 
     # --- 7. report ACTUAL state, not this run's loop counters --------------
     # The counters above track what THIS invocation did. A batch is resumable,
@@ -229,7 +229,7 @@ async def run_batch(
         totals = await conn.fetch(
             """
             SELECT er.status::text AS status, count(*) AS n,
-                   coalesce(sum(er.amount_paise),0) AS paise
+                   coalesce(sum(er.amount_minor),0) AS paise
               FROM execution_records er
               JOIN recovery_actions ra ON ra.id = er.action_id
               JOIN revenue_incidents i ON i.id = ra.incident_id
@@ -250,24 +250,25 @@ async def run_batch(
             """, merchant_id)]
 
     async with pool.acquire() as conn:
-        result.attempted_paise = int(await conn.fetchval(
+        result.attempted_minor = int(await conn.fetchval(
             """
-            SELECT coalesce(sum(er.amount_paise),0) FROM execution_records er
+            SELECT coalesce(sum(er.amount_minor),0) FROM execution_records er
              WHERE er.status IN ('succeeded','pending')
                AND er.execution_policy_hash IS NOT NULL
             """) or 0)
         # Verified recoveries only. The Outcome Engine excludes replayed
         # events, so this figure cannot be inflated by anything but a real
         # Razorpay webhook.
-        result.recovered_paise = int(await conn.fetchval(
-            "SELECT coalesce(sum(recovered_paise),0) FROM recovery_outcomes"
+        result.recovered_minor = int(await conn.fetchval(
+            "SELECT coalesce(sum(recovered_minor),0) FROM recovery_outcomes"
             " WHERE succeeded") or 0)
 
     return result
 
 
-def _fmt(paise: int) -> str:
-    return f"₹{paise / 100:,.2f}"
+def _fmt(amount_minor, currency: str = "INR") -> str:
+    """Display helper. The unit comes from the currency, not the field name."""
+    return format_money(amount_minor, currency)
 
 
 def render(r: BatchResult) -> str:
@@ -276,7 +277,7 @@ def render(r: BatchResult) -> str:
         "  REVENANT — batch recovery run   (SYNTHETIC TEST DATA)",
         "=" * 62,
         f"  incidents detected      : {r.incidents}",
-        f"  revenue at risk         : {_fmt(r.revenue_at_risk_paise)}",
+        f"  revenue at risk         : {_fmt(r.revenue_at_risk_minor)}",
         "",
         f"  recovery candidates     : {r.candidates}",
         f"    AUTO_APPROVED         : {r.auto_approved}",
@@ -297,10 +298,10 @@ def render(r: BatchResult) -> str:
     lines += [
         "",
         f"  payment links issued    : {len(r.links)}",
-        f"  recovery attempted      : {_fmt(r.attempted_paise)}",
-        f"  RECOVERED (verified)    : {_fmt(r.recovered_paise)}",
+        f"  recovery attempted      : {_fmt(r.attempted_minor)}",
+        f"  RECOVERED (verified)    : {_fmt(r.recovered_minor)}",
     ]
-    if r.recovered_paise == 0 and r.executed:
+    if r.recovered_minor == 0 and r.executed:
         lines.append("    ^ links issued; nothing paid yet. Recovered revenue is")
         lines.append("      counted only from verified Razorpay webhooks.")
     lines.append("=" * 62)

@@ -59,7 +59,7 @@ class NormalizedEvent:
     payment_id: str | None
     payment_link_id: str | None
     reference_id: str | None
-    amount_paise: int | None
+    amount_minor: int | None
     status: str | None
 
 
@@ -93,7 +93,7 @@ def normalize(payload: dict) -> NormalizedEvent | None:
         payment_id=payment.get("id"),
         payment_link_id=link.get("id"),
         reference_id=link.get("reference_id") or payment.get("reference_id"),
-        amount_paise=amount,
+        amount_minor=amount,
         status=payment.get("status") or link.get("status"),
     )
 

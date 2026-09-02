@@ -69,8 +69,9 @@ EXECUTABLE_STATUSES = {"approved"}
 COMMITTED_EXECUTION_STATUSES = ("succeeded", "pending")
 
 
-async def daily_committed_paise(
-    conn: asyncpg.Connection, now: datetime, timezone_name: str
+async def daily_committed_minor(
+    conn: asyncpg.Connection, now: datetime, timezone_name: str,
+    merchant_id: str,
 ) -> int:
     """Money committed to recovery so far today.
 
@@ -87,6 +88,11 @@ async def daily_committed_paise(
     stamps the rows, so the daily total is always computed over the period it
     claims to.
 
+    SCOPED TO ONE MERCHANT. This previously summed every execution in the
+    table, so one merchant's recoveries consumed another merchant's daily cap —
+    a merchant could be refused because somebody else had been busy. D14 made
+    the limits per-merchant; the spend they are measured against has to be too.
+
     TIMEZONE: the day boundary is the MERCHANT's, not UTC. The boundary is
     computed in Python by `merchant_day_start` so the same definition of
     "today" is used everywhere, rather than being re-derived in SQL where it
@@ -95,12 +101,15 @@ async def daily_committed_paise(
     day_start = merchant_day_start(now, timezone_name)
     total = await conn.fetchval(
         """
-        SELECT coalesce(sum(amount_paise), 0)
-          FROM execution_records
-         WHERE status::text = ANY($2::text[])
-           AND created_at >= $1
+        SELECT coalesce(sum(er.amount_minor), 0)
+          FROM execution_records er
+          JOIN recovery_actions ra ON ra.id = er.action_id
+          JOIN payments p ON p.id = ra.payment_id
+         WHERE er.status::text = ANY($2::text[])
+           AND er.created_at >= $1
+           AND p.merchant_id = $3
         """,
-        day_start, list(COMMITTED_EXECUTION_STATUSES),
+        day_start, list(COMMITTED_EXECUTION_STATUSES), merchant_id,
     )
     return int(total or 0)
 
@@ -134,7 +143,7 @@ IDEMPOTENCY_KEY_PREFIX = "rv_"
 RAZORPAY_REFERENCE_ID_MAX = 40
 
 
-def idempotency_key(action_id: int, amount_paise: int, policy_version: str) -> str:
+def idempotency_key(action_id: int, amount_minor: int, policy_version: str) -> str:
     """Stable per (action, amount, policy version).
 
     Amount is included deliberately: if the amount changed, this is not the
@@ -143,7 +152,7 @@ def idempotency_key(action_id: int, amount_paise: int, policy_version: str) -> s
     128 bits of SHA-256 is far more than enough to avoid collisions at any
     volume this system will ever see.
     """
-    raw = f"revenant:v1:{action_id}:{amount_paise}:{policy_version}"
+    raw = f"revenant:v1:{action_id}:{amount_minor}:{policy_version}"
     digest = hashlib.sha256(raw.encode()).hexdigest()[:IDEMPOTENCY_KEY_HEX]
     key = f"{IDEMPOTENCY_KEY_PREFIX}{digest}"
     if len(key) > RAZORPAY_REFERENCE_ID_MAX:
@@ -173,7 +182,7 @@ async def execute_action(
     row = await conn.fetchrow(
         """
         SELECT ra.id, ra.payment_id, ra.customer_id, ra.action::text AS action,
-               ra.amount_paise, ra.status::text AS status, ra.expires_at,
+               ra.amount_minor, ra.status::text AS status, ra.expires_at,
                ra.proposed_at,
                p.status::text AS payment_status, p.merchant_id,
                c.email, c.phone, c.opted_out,
@@ -244,7 +253,7 @@ async def execute_action(
     #
     # Reaching this point means a policy decision exists, so any execution
     # found here already passed every check when it was created.
-    key = idempotency_key(action_id, int(row["amount_paise"]),
+    key = idempotency_key(action_id, int(row["amount_minor"]),
                           row["authorized_policy_version"])
     existing = await conn.fetchrow(
         """
@@ -285,12 +294,12 @@ async def execute_action(
     meta = row["policy_metadata"]
     if isinstance(meta, str):
         meta = json.loads(meta)
-    ruled_amount = (meta or {}).get("amount_paise")
-    if ruled_amount is not None and int(ruled_amount) != int(row["amount_paise"]):
+    ruled_amount = (meta or {}).get("amount_minor")
+    if ruled_amount is not None and int(ruled_amount) != int(row["amount_minor"]):
         raise ExecutionRefused(
             "amount_changed",
             f"Amount changed after policy ruling "
-            f"({ruled_amount} -> {row['amount_paise']} paise). Refusing.",
+            f"({ruled_amount} -> {row['amount_minor']} paise). Refusing.",
         )
 
     # --- 6. RE-EVALUATE POLICY AGAINST CURRENT STATE ------------------------
@@ -344,15 +353,15 @@ async def execute_action(
             customer_opted_out=row["opted_out"],
             prior_attempts=int(row["prior_attempts"] or 0),
             last_attempt_at=None,   # this action IS the current attempt
-            recovered_today_paise=await daily_committed_paise(
-                conn, now, policy_config.business_timezone),
+            recovered_today_minor=await daily_committed_minor(
+                conn, now, policy_config.business_timezone, merchant_id),
             now=now,
         )
         fresh_action = ProposedAction(
             action=ActionType(row["action"]),
             customer_id=row["customer_id"],
             payment_id=row["payment_id"],
-            amount_paise=int(row["amount_paise"]),
+            amount_minor=int(row["amount_minor"]),
             # The action's real proposal time, so the engine's own
             # `action_expired` rule evaluates correctly (D13: one source of
             # truth for every policy rule).
@@ -389,13 +398,13 @@ async def execute_action(
                 execution_id = await conn.fetchval(
                     """
                     INSERT INTO execution_records
-                        (action_id, idempotency_key, status, amount_paise,
+                        (action_id, idempotency_key, status, amount_minor,
                          attempts, created_at, execution_policy_version,
                          execution_policy_hash, execution_policy_evaluated_at)
                     VALUES ($1,$2,'pending',$3,1,$4,$5,$6,$7)
                     RETURNING id
                     """,
-                    action_id, key, int(row["amount_paise"]), now,
+                    action_id, key, int(row["amount_minor"]), now,
                     fresh.policy_version, fresh.policy_hash, fresh.evaluated_at,
                 )
             except asyncpg.UniqueViolationError:
@@ -437,7 +446,7 @@ async def execute_action(
 
     try:
         link: PaymentLink = await client.create_payment_link(
-            amount_paise=int(row["amount_paise"]),
+            amount_minor=int(row["amount_minor"]),
             reference_id=key,          # Razorpay's own duplicate guard
             description=f"Recovery for payment {row['payment_id']}",
             customer_email=row["email"],
@@ -512,12 +521,12 @@ async def _audit(conn, actor: str, event_type: str, row, action_id: int,
         """
         INSERT INTO audit_events
             (actor, event_type, merchant_id, customer_id, payment_id,
-             action_id, execution_id, amount_paise, policy_version,
+             action_id, execution_id, amount_minor, policy_version,
              policy_result, reason, error)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::policy_result,$11,$12)
         """,
         actor, event_type, row["merchant_id"], row["customer_id"],
-        row["payment_id"], action_id, execution_id, row["amount_paise"],
+        row["payment_id"], action_id, execution_id, row["amount_minor"],
         row["authorized_policy_version"], row["authorized_result"], reason, error,
     )
 
@@ -568,7 +577,7 @@ async def resolve_pending_execution(
     """
     row = await conn.fetchrow(
         """
-        SELECT er.id, er.action_id, er.idempotency_key, er.amount_paise,
+        SELECT er.id, er.action_id, er.idempotency_key, er.amount_minor,
                er.status::text AS status, ra.payment_id, ra.customer_id,
                c.email, c.phone, p.merchant_id
           FROM execution_records er
@@ -591,7 +600,7 @@ async def resolve_pending_execution(
     key = row["idempotency_key"]
     try:
         link = await client.create_payment_link(
-            amount_paise=int(row["amount_paise"]),
+            amount_minor=int(row["amount_minor"]),
             reference_id=key,
             description=f"Recovery for payment {row['payment_id']}",
             customer_email=row["email"],
@@ -639,11 +648,11 @@ async def resolve_pending_execution(
         """
         INSERT INTO audit_events
             (actor, event_type, merchant_id, customer_id, payment_id,
-             action_id, execution_id, amount_paise, reason)
+             action_id, execution_id, amount_minor, reason)
         VALUES ('EXECUTOR','PENDING_RESOLVED',$1,$2,$3,$4,$5,$6,$7)
         """,
         row["merchant_id"], row["customer_id"], row["payment_id"],
-        row["action_id"], execution_id, int(row["amount_paise"]),
+        row["action_id"], execution_id, int(row["amount_minor"]),
         f"razorpay_ref={ref}",
     )
     log.info("executor.pending_resolved execution=%s ref=%s", execution_id, ref)

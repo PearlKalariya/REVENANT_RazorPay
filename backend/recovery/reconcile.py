@@ -37,7 +37,7 @@ class ReconcileResult:
     checked: int = 0
     newly_paid: int = 0
     newly_closed: int = 0
-    recovered_paise: int = 0
+    recovered_minor: int = 0
     unchanged: int = 0
     errors: int = 0
 
@@ -52,7 +52,7 @@ async def reconcile_outcomes(
     """Ask Razorpay what happened to executions we have no outcome for."""
     rows = await conn.fetch(
         """
-        SELECT er.id, er.razorpay_ref, er.amount_paise, er.idempotency_key
+        SELECT er.id, er.razorpay_ref, er.amount_minor, er.idempotency_key
           FROM execution_records er
           JOIN recovery_actions ra ON ra.id = er.action_id
           JOIN revenue_incidents i ON i.id = ra.incident_id
@@ -108,7 +108,7 @@ async def reconcile_outcomes(
             event_type="payment_link.paid" if paid else "payment_link.expired",
             reference_id=row["idempotency_key"],
             payment_link_id=row["razorpay_ref"],
-            amount_paise=amount,
+            amount_minor=amount,
             source="razorpay_api",
         )
         if not outcome.counted:
@@ -117,10 +117,10 @@ async def reconcile_outcomes(
 
         if paid:
             result.newly_paid += 1
-            result.recovered_paise += outcome.recovered_paise
+            result.recovered_minor += outcome.recovered_minor
         else:
             result.newly_closed += 1
 
     log.info("reconcile.done checked=%d paid=%d recovered=%d",
-             result.checked, result.newly_paid, result.recovered_paise)
+             result.checked, result.newly_paid, result.recovered_minor)
     return result

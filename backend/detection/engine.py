@@ -53,7 +53,7 @@ class DetectionConfig:
 class PaymentRecord:
     id: str
     customer_id: str
-    amount_paise: int
+    amount_minor: int
     status: str
     method: str
     created_at: datetime
@@ -71,7 +71,7 @@ class Incident:
     window_start: datetime
     window_end: datetime
     affected_payment_ids: list[str] = field(default_factory=list)
-    revenue_at_risk_paise: int = 0
+    revenue_at_risk_minor: int = 0
     observed_failure_rate: float = 0.0
     baseline_failure_rate: float = 0.0
     total_in_window: int = 0
@@ -171,7 +171,7 @@ def detect(
                     window_start=start,
                     window_end=end,
                     affected_payment_ids=[r.id for r in failures],
-                    revenue_at_risk_paise=sum(r.amount_paise for r in failures),
+                    revenue_at_risk_minor=sum(r.amount_minor for r in failures),
                     observed_failure_rate=round(observed, 4),
                     baseline_failure_rate=round(baseline, 4),
                     total_in_window=len(rows),
@@ -186,5 +186,5 @@ def detect(
             group.append(w)
         flush(group)
 
-    incidents.sort(key=lambda i: i.revenue_at_risk_paise, reverse=True)
+    incidents.sort(key=lambda i: i.revenue_at_risk_minor, reverse=True)
     return incidents

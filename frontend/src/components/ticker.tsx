@@ -1,4 +1,4 @@
-import { getAudit, label, clockIST, rupees } from "@/lib/api";
+import { getAudit, label, clockIST, money } from "@/lib/api";
 
 const TONE: Record<string, string> = {
   REVENUE_RECOVERED: "text-recovered",
@@ -23,7 +23,7 @@ export async function AuditTicker() {
     <span key={i} className="mono px-[26px] text-[12px]">
       {clockIST(e.ts)}{" "}
       <span className={TONE[e.event_type] ?? "text-[#7b9dff]"}>{label(e.event_type)}</span>
-      {e.amount_paise ? ` ${rupees(e.amount_paise)}` : ""}
+      {e.amount_minor ? ` ${money(e.amount_minor)}` : ""}
       {e.reason ? ` · ${e.reason.slice(0, 72)}` : ""}
     </span>
   ));

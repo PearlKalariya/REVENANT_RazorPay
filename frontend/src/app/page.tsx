@@ -3,7 +3,7 @@ import { Header, DataNote, SectionRule } from "@/components/chrome";
 import { AuditTicker } from "@/components/ticker";
 import {
   getMetrics, getIncidents, getActions,
-  label, rupees, rupeesShort,
+  label, money, moneyShort,
   type Metrics, type Incident, type RecoveryAction,
 } from "@/lib/api";
 
@@ -27,8 +27,8 @@ export default async function Dashboard() {
     return <Offline />;
   }
 
-  const attempted = metrics.recovery_attempted_paise;
-  const recovered = metrics.recovered_paise;
+  const attempted = metrics.recovery_attempted_minor;
+  const recovered = metrics.recovered_minor;
   const remainder = Math.max(0, attempted - recovered);
   const rate = metrics.recovery_rate_of_attempted;
 
@@ -62,7 +62,7 @@ export default async function Dashboard() {
               </span>
             </div>
             <div className="flex flex-wrap items-baseline gap-x-5 gap-y-2">
-              <span className="disp tnum leading-[.86] text-[clamp(44px,6.6vw,92px)]">{rupeesShort(recovered)}</span>
+              <span className="disp tnum leading-[.86] text-[clamp(44px,6.6vw,92px)]">{moneyShort(recovered)}</span>
               {rate !== null && (
                 <span className="disp inline-block -rotate-2 whitespace-nowrap bg-ink px-[13px] py-0.5 text-decide text-[clamp(20px,2.9vw,40px)]">
                   {(rate * 100).toFixed(1)}%
@@ -79,9 +79,9 @@ export default async function Dashboard() {
               <div className="stripe" style={{ flexGrow: remainder || 0.0001, animationDuration: "19s" }} />
             </div>
             <div className="mt-2 flex justify-between">
-              <span className="mono text-[11.5px] font-bold">{rupees(recovered)} RECOVERED</span>
+              <span className="mono text-[11.5px] font-bold">{money(recovered)} RECOVERED</span>
               <span className="mono text-[11.5px]">
-                {rupees(attempted)} ATTEMPTED · {metrics.payment_links_issued} LINKS
+                {money(attempted)} ATTEMPTED · {metrics.payment_links_issued} LINKS
               </span>
             </div>
           </div>
@@ -93,7 +93,7 @@ export default async function Dashboard() {
             <div className="relative">
               <span className="mono text-[11px] font-bold tracking-[.16em]">REVENUE AT RISK</span>
               <div className="disp tnum mt-[7px] leading-none text-[clamp(28px,3.4vw,46px)]">
-                {rupeesShort(metrics.revenue_at_risk_paise)}
+                {moneyShort(metrics.revenue_at_risk_minor)}
               </div>
               <div className="mono mt-[5px] text-[11px]">
                 {incident?.affected_count ?? 0} FAILED PAYMENTS
@@ -112,7 +112,7 @@ export default async function Dashboard() {
               <span className="mono text-[11px] font-bold tracking-[.16em]">WAITING ON YOU</span>
               <div className="mt-[7px] flex items-baseline gap-3.5">
                 <span className="disp leading-none text-[clamp(28px,3.4vw,46px)]">{needsApproval}</span>
-                <span className="disp tnum text-[clamp(15px,1.7vw,22px)]">{rupeesShort(heldPaise)}</span>
+                <span className="disp tnum text-[clamp(15px,1.7vw,22px)]">{moneyShort(heldPaise)}</span>
               </div>
               <div className="mono mt-[5px] text-[11px]">ABOVE THE ₹5,000 AUTO LIMIT</div>
             </div>
@@ -180,7 +180,7 @@ export default async function Dashboard() {
               <div className="hard relative flex flex-col gap-3.5 border-4 border-ink bg-paper p-5">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <div className="disp tnum leading-[.95] text-[clamp(30px,3.4vw,47px)]">{rupeesShort(next.amount_paise)}</div>
+                    <div className="disp tnum leading-[.95] text-[clamp(30px,3.4vw,47px)]">{moneyShort(next.amount_minor)}</div>
                     <div className="mono mt-[7px] text-[11px]">
                       {next.payment_id} · {label(next.customer_id)}
                     </div>

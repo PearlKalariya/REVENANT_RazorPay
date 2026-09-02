@@ -83,16 +83,16 @@ def test_defaults_apply_when_nothing_stored():
     cfg = build_policy(None)
     assert cfg.currency == "INR"
     assert cfg.business_timezone == "Asia/Kolkata"
-    assert cfg.max_daily_recovery_paise == 2_500_000
+    assert cfg.max_daily_recovery_minor == 2_500_000
 
 
 def test_merchant_overrides_are_layered_over_defaults():
     cfg = build_policy({"business_timezone": "America/New_York",
                         "currency": "USD",
-                        "max_daily_recovery_paise": 500_000})
+                        "max_daily_recovery_minor": 500_000})
     assert cfg.business_timezone == "America/New_York"
     assert cfg.currency == "USD"
-    assert cfg.max_daily_recovery_paise == 500_000
+    assert cfg.max_daily_recovery_minor == 500_000
     assert cfg.max_retry_attempts == PolicyConfig().max_retry_attempts
 
 
@@ -100,7 +100,7 @@ def test_unknown_key_is_rejected_not_ignored():
     """A typo'd limit that silently does nothing is worse than a startup error:
     the limit it was meant to set never takes effect."""
     with pytest.raises(MerchantConfigError, match="Unknown policy keys"):
-        build_policy({"max_daily_recovery": 500_000})   # missing _paise
+        build_policy({"max_daily_recovery": 500_000})   # missing _minor
 
 
 def test_invalid_timezone_rejected_at_load():
@@ -112,8 +112,8 @@ def test_auto_limit_above_daily_cap_rejected():
     """An auto-approve threshold larger than the daily cap means a single
     permitted action could never fit inside the day's budget."""
     with pytest.raises(MerchantConfigError, match="exceeds"):
-        build_policy({"max_auto_amount_paise": 9_000_000,
-                      "max_daily_recovery_paise": 2_500_000})
+        build_policy({"max_auto_amount_minor": 9_000_000,
+                      "max_daily_recovery_minor": 2_500_000})
 
 
 # --- loading from the database --------------------------------------------
@@ -134,8 +134,8 @@ async def test_three_merchants_three_configurations(conn):
             "INSERT INTO merchants(id,name,policy_config) VALUES($1,$2,$3)",
             mid, mid.upper(),
             json.dumps({"business_timezone": tz, "currency": ccy,
-                        "max_daily_recovery_paise": cap,
-                        "max_auto_amount_paise": auto}))
+                        "max_daily_recovery_minor": cap,
+                        "max_auto_amount_minor": auto}))
 
     now = datetime(2026, 8, 28, 20, 30, tzinfo=timezone.utc)
     days = {}
@@ -143,8 +143,8 @@ async def test_three_merchants_three_configurations(conn):
         cfg = await load_merchant_config(conn, mid)
         assert cfg.timezone == tz
         assert cfg.currency == ccy
-        assert cfg.policy.max_daily_recovery_paise == cap
-        assert cfg.policy.max_auto_amount_paise == auto
+        assert cfg.policy.max_daily_recovery_minor == cap
+        assert cfg.policy.max_auto_amount_minor == auto
         days[mid] = current_merchant_day(now, cfg.timezone)
 
     assert days["m_in"] != days["m_us"], (
@@ -162,7 +162,7 @@ async def test_demo_merchant_has_explicit_config(conn):
     cfg = await load_merchant_config(conn, "m_demo")
     assert cfg.currency == "INR"
     assert cfg.timezone == "Asia/Kolkata"
-    assert cfg.policy.max_daily_recovery_paise == 2_500_000
+    assert cfg.policy.max_daily_recovery_minor == 2_500_000
 
 
 def test_unsupported_currency_is_refused_not_silently_converted():
@@ -183,5 +183,5 @@ def test_unsupported_currency_is_refused_not_silently_converted():
 
     with pytest.raises(RazorpayError, match="only settle"):
         asyncio.run(client.create_payment_link(
-            amount_paise=1000, reference_id="rv_x", description="d",
+            amount_minor=1000, reference_id="rv_x", description="d",
             currency="USD"))

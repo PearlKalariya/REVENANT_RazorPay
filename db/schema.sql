@@ -75,7 +75,7 @@ CREATE TABLE payments (
     id              TEXT PRIMARY KEY,              -- Razorpay payment id
     merchant_id     TEXT NOT NULL REFERENCES merchants(id) ON DELETE CASCADE,
     customer_id     TEXT NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
-    amount_paise    BIGINT NOT NULL CHECK (amount_paise > 0),
+    amount_minor    BIGINT NOT NULL CHECK (amount_minor > 0),
     currency        TEXT NOT NULL DEFAULT 'INR',
     status          payment_status NOT NULL,
     method          TEXT,                          -- upi | card | netbanking
@@ -123,7 +123,7 @@ CREATE TABLE revenue_incidents (
     merchant_id         TEXT NOT NULL REFERENCES merchants(id) ON DELETE CASCADE,
     title               TEXT NOT NULL,
     status              incident_status NOT NULL DEFAULT 'open',
-    revenue_at_risk_paise BIGINT NOT NULL DEFAULT 0 CHECK (revenue_at_risk_paise >= 0),
+    revenue_at_risk_minor BIGINT NOT NULL DEFAULT 0 CHECK (revenue_at_risk_minor >= 0),
     affected_count      INTEGER NOT NULL DEFAULT 0,
     detected_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
     resolved_at         TIMESTAMPTZ
@@ -151,7 +151,7 @@ CREATE TABLE recovery_actions (
     payment_id          TEXT NOT NULL REFERENCES payments(id) ON DELETE CASCADE,
     customer_id         TEXT NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
     action              action_type NOT NULL,
-    amount_paise        BIGINT NOT NULL CHECK (amount_paise >= 0),
+    amount_minor        BIGINT NOT NULL CHECK (amount_minor >= 0),
     status              action_status NOT NULL DEFAULT 'proposed',
     -- Advisory only. Must never override the Policy Engine.
     recovery_score      REAL CHECK (recovery_score >= 0 AND recovery_score <= 1),
@@ -226,7 +226,7 @@ CREATE TABLE execution_records (
     status              execution_status NOT NULL DEFAULT 'pending',
     -- Amount actually sent to Razorpay. Compared against the approved amount
     -- so a post-approval amount change is detectable.
-    amount_paise        BIGINT NOT NULL CHECK (amount_paise >= 0),
+    amount_minor        BIGINT NOT NULL CHECK (amount_minor >= 0),
     razorpay_ref        TEXT,               -- payment link id
     razorpay_short_url  TEXT,
     error               TEXT,
@@ -248,7 +248,7 @@ CREATE INDEX idx_exec_ref    ON execution_records(razorpay_ref);
 CREATE TABLE recovery_outcomes (
     id                  BIGSERIAL PRIMARY KEY,
     execution_id        BIGINT NOT NULL REFERENCES execution_records(id) ON DELETE CASCADE,
-    recovered_paise     BIGINT NOT NULL DEFAULT 0 CHECK (recovered_paise >= 0),
+    recovered_minor     BIGINT NOT NULL DEFAULT 0 CHECK (recovered_minor >= 0),
     succeeded           BOOLEAN NOT NULL,
     -- The event that proves it. Outcomes without a verified event are not
     -- counted in metrics.
@@ -272,7 +272,7 @@ CREATE TABLE audit_events (
     incident_id     BIGINT,
     action_id       BIGINT,
     execution_id    BIGINT,
-    amount_paise    BIGINT,
+    amount_minor    BIGINT,
     policy_version  TEXT,
     policy_result   policy_result,
     approval_id     BIGINT,

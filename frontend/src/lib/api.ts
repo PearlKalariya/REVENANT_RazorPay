@@ -28,13 +28,14 @@ async function get<T>(path: string): Promise<T> {
 
 export type Metrics = {
   data_source: string;
-  revenue_at_risk_paise: number;
+  currency: string;
+  revenue_at_risk_minor: number;
   revenue_at_risk: string;
   actions_by_status: Record<string, { count: number; paise: number }>;
   payment_links_issued: number;
-  recovery_attempted_paise: number;
+  recovery_attempted_minor: number;
   recovery_attempted: string;
-  recovered_paise: number;
+  recovered_minor: number;
   recovered: string;
   recovered_count: number;
   recovery_rate_of_attempted: number | null;
@@ -46,7 +47,8 @@ export type Incident = {
   id: number;
   title: string;
   status: string;
-  revenue_at_risk_paise: number;
+  currency: string;
+  revenue_at_risk_minor: number;
   revenue_at_risk: string;
   affected_count: number;
   detected_at: string;
@@ -59,7 +61,7 @@ export type RecoveryAction = {
   payment_id: string;
   customer_id: string;
   action: string;
-  amount_paise: number;
+  amount_minor: number;
   amount: string;
   status: string;
   recovery_score: number | null;
@@ -67,7 +69,7 @@ export type RecoveryAction = {
   policy: { result: string | null; rule: string | null; authorized_policy_version: string | null };
   execution_status: string | null;
   payment_link: string | null;
-  recovered_paise: number;
+  recovered_minor: number;
   recovered: boolean;
   proposed_at: string;
 };
@@ -81,7 +83,7 @@ export type AuditEvent = {
   incident_id: number | null;
   action_id: number | null;
   execution_id: number | null;
-  amount_paise: number | null;
+  amount_minor: number | null;
   policy_version: string | null;
   policy_result: string | null;
   reason: string | null;
@@ -193,11 +195,38 @@ export function label(value: string | null | undefined): string {
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
-export const rupees = (paise: number) =>
-  `₹${(paise / 100).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+/**
+ * Money formatting.
+ *
+ * Amounts are integers in the currency's MINOR unit — paise, cents, pence.
+ * The unit is defined by the CURRENCY, never by the field name: 500_000 is
+ * ₹5,000.00 in INR and $5,000.00 in USD (decision D16). Nothing here may
+ * assume rupees.
+ */
+const MINOR_PER_MAJOR: Record<string, number> = {
+  INR: 100, USD: 100, GBP: 100, EUR: 100, JPY: 1, KWD: 1000, BHD: 1000,
+};
+const LOCALE: Record<string, string> = {
+  INR: "en-IN", USD: "en-US", GBP: "en-GB", EUR: "de-DE", JPY: "ja-JP",
+};
 
-export const rupeesShort = (paise: number) =>
-  `₹${Math.round(paise / 100).toLocaleString("en-IN")}`;
+export const money = (amountMinor: number, currency = "INR") => {
+  const per = MINOR_PER_MAJOR[currency] ?? 100;
+  const digits = per > 1 ? 2 : 0;
+  return new Intl.NumberFormat(LOCALE[currency] ?? "en-IN", {
+    style: "currency", currency,
+    minimumFractionDigits: digits, maximumFractionDigits: digits,
+  }).format(amountMinor / per);
+};
+
+/** Same, rounded to whole units — for headline figures where the decimals
+ *  are noise rather than information. */
+export const moneyShort = (amountMinor: number, currency = "INR") => {
+  const per = MINOR_PER_MAJOR[currency] ?? 100;
+  return new Intl.NumberFormat(LOCALE[currency] ?? "en-IN", {
+    style: "currency", currency, maximumFractionDigits: 0,
+  }).format(amountMinor / per);
+};
 
 export const clockIST = (iso: string) =>
   new Date(iso).toLocaleTimeString("en-IN", {

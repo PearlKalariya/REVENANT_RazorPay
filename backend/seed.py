@@ -22,6 +22,7 @@ from datetime import datetime, timedelta, timezone
 
 import asyncpg
 
+from .policy import format_money
 from .config import get_settings
 
 SEED = 42
@@ -56,7 +57,7 @@ FAILURE_REASONS = {
 }
 
 
-def _amount_paise(rng: random.Random) -> int:
+def _amount_minor(rng: random.Random) -> int:
     """Realistic order values. Long tail so some land above the ₹5,000
     autonomous limit, which is what exercises the approval path."""
     bucket = rng.random()
@@ -90,7 +91,7 @@ def build_dataset() -> tuple[list, list, dict]:
         "total": 0,
         "failed": 0,
         "captured": 0,
-        "at_risk_paise": 0,
+        "at_risk_minor": 0,
         "spike_upi_failed": 0,
     }
 
@@ -105,14 +106,14 @@ def build_dataset() -> tuple[list, list, dict]:
         )
         fail_rate = SPIKE_UPI_FAILURE_RATE if in_spike else BASELINE_FAILURE_RATE
         failed = rng.random() < fail_rate
-        amount = _amount_paise(rng)
+        amount = _amount_minor(rng)
 
         code = reason = None
         if failed:
             status = "failed"
             code, reason = rng.choice(FAILURE_REASONS[method])
             stats["failed"] += 1
-            stats["at_risk_paise"] += amount
+            stats["at_risk_minor"] += amount
             if in_spike:
                 stats["spike_upi_failed"] += 1
         else:
@@ -169,8 +170,8 @@ async def seed() -> dict:
                 json.dumps({
                     "currency": "INR",
                     "business_timezone": "Asia/Kolkata",
-                    "max_auto_amount_paise": 500_000,      # ₹5,000
-                    "max_daily_recovery_paise": 2_500_000, # ₹25,000
+                    "max_auto_amount_minor": 500_000,      # ₹5,000
+                    "max_daily_recovery_minor": 2_500_000, # ₹25,000
                     "max_retry_attempts": 2,
                     "retry_cooldown_minutes": 30,
                 }),
@@ -181,7 +182,7 @@ async def seed() -> dict:
                 customers,
             )
             await conn.executemany(
-                "INSERT INTO payments (id, merchant_id, customer_id, amount_paise,"
+                "INSERT INTO payments (id, merchant_id, customer_id, amount_minor,"
                 " currency, status, method, failure_reason, failure_code,"
                 " created_at, is_synthetic)"
                 " VALUES ($1,$2,$3,$4,$5,$6::payment_status,$7,$8,$9,$10,$11)",
@@ -192,8 +193,9 @@ async def seed() -> dict:
         await conn.close()
 
 
-def _rupees(paise: int) -> str:
-    return f"₹{paise / 100:,.2f}"
+def _rupees(amount_minor, currency: str = "INR") -> str:
+    """Display helper. The unit comes from the currency, not the field name."""
+    return format_money(amount_minor, currency)
 
 
 if __name__ == "__main__":
@@ -206,7 +208,7 @@ if __name__ == "__main__":
     print(f"  payments          : {result['total']}")
     print(f"  captured          : {result['captured']}")
     print(f"  failed            : {result['failed']}")
-    print(f"  revenue at risk   : {_rupees(result['at_risk_paise'])}")
+    print(f"  revenue at risk   : {_rupees(result['at_risk_minor'])}")
     print(f"  UPI spike failures: {result['spike_upi_failed']}"
           f" (window {SPIKE_START_HOUR}:00-{SPIKE_END_HOUR}:00 UTC)")
     print("=" * 58)
