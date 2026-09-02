@@ -287,3 +287,53 @@ and the resulting ambiguity is exactly the bug this rename exists to prevent.
 Razorpay client boundary — a merchant configured for a currency this
 integration cannot settle is refused rather than silently charged in rupees.
 **Date:** 2026-08-28
+
+---
+
+## D17 — Demo merchant's daily cap raised to ₹75,000
+**Question:** approvals were being refused with `daily_limit_exceeded` because
+the day's recoveries had reached the ₹25,000 cap.
+**Chosen:** raise the DEMO MERCHANT's `max_daily_recovery_minor` to ₹75,000.
+The ₹5,000 autonomous limit is unchanged.
+**Status:** APPROVED · **Approved by:** Human · **Date:** 2026-09-02
+
+**Reason — a sizing mismatch, not a safety change.** The ₹25,000 cap was set
+when the synthetic dataset held ₹53,737 at risk. The dataset now holds ₹76,827
+(a second, structural failure cluster was added), so the cap was no longer
+proportionate to the data it governs and blocked ordinary recoveries rather
+than excessive ones.
+
+**What did NOT change:** the enforcement. D13's execution-time re-evaluation
+still runs against whatever number is configured, and the cap still blocks when
+genuinely exceeded — verified in the Failure Lab, where ₹3,000 against a spent
+budget is still refused.
+
+**Scope:** this merchant's configuration row only (D14 — limits are
+merchant-owned). No code default changed; `PolicyConfig` still ships ₹25,000.
+
+---
+
+## D18 — Recovery actions live 24 hours, not 60 minutes
+**Status:** AGENT DECISION — pending human confirmation · **Date:** 2026-09-02
+
+**Problem:** `action_ttl_minutes` was 60. Any approval not granted within the
+hour expired, and the executor correctly refused it. Observed repeatedly: a
+queue of pending approvals emptied itself before anyone could act on it.
+
+**Why 60 minutes is wrong on product grounds, not just demo grounds.** This TTL
+governs a queue a HUMAN works through. A merchant who steps away for lunch
+returns to an expired queue and no recovered revenue — the system would refuse
+work it was explicitly asked to do, for no safety benefit.
+
+**Chosen:** 24 hours for the demo merchant. Merchant-configurable (D14); the
+code default is unchanged.
+
+**Why this does not weaken safety.** Freshness was never what made a stale
+approval safe — D13 is. Policy is re-evaluated against CURRENT state
+immediately before money moves, so an action approved yesterday is still
+refused today if the cap is now spent, the customer has opted out, or the
+payment has settled. The TTL is a coarse backstop; the real guard is the
+re-check, and it is unaffected.
+
+**Still enforced:** an action older than the window is refused, and the refusal
+is recorded with `action_expired` in the audit trail.

@@ -158,11 +158,23 @@ async def test_unknown_merchant_rejected(conn):
 
 async def test_demo_merchant_has_explicit_config(conn):
     """The seeded merchant carries its own configuration rather than relying on
-    code defaults, so the stored path is the one actually exercised."""
+    code defaults, so the stored path is the one actually exercised.
+
+    The daily cap here is ₹75,000 per decision D17 — raised from ₹25,000 when
+    the dataset grew to ₹76,827 at risk and the old cap stopped being
+    proportionate to the data it governs. The CODE default is still ₹25,000;
+    only this merchant's stored row differs, which is the point of D14.
+    """
     cfg = await load_merchant_config(conn, "m_demo")
     assert cfg.currency == "INR"
     assert cfg.timezone == "Asia/Kolkata"
-    assert cfg.policy.max_daily_recovery_minor == 2_500_000
+    assert cfg.policy.max_daily_recovery_minor == 7_500_000     # D17
+    assert cfg.policy.max_auto_amount_minor == 500_000          # unchanged
+    assert cfg.policy.action_ttl_minutes == 24 * 60             # D18
+
+    from backend.policy import PolicyConfig
+    assert PolicyConfig().max_daily_recovery_minor == 2_500_000, (
+        "the code default must not drift with one merchant's configuration")
 
 
 def test_unsupported_currency_is_refused_not_silently_converted():

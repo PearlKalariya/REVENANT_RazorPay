@@ -211,9 +211,10 @@ async def seed() -> dict:
                     "currency": "INR",
                     "business_timezone": "Asia/Kolkata",
                     "max_auto_amount_minor": 500_000,      # ₹5,000
-                    "max_daily_recovery_minor": 2_500_000, # ₹25,000
+                    "max_daily_recovery_minor": 7_500_000, # ₹75,000 — see D17
                     "max_retry_attempts": 2,
                     "retry_cooldown_minutes": 30,
+                    "action_ttl_minutes": 24 * 60,  # see D18
                 }),
             )
             await conn.executemany(

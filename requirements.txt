@@ -1,6 +1,11 @@
-# REVENANT backend. Python 3.13.
-# Versions pinned after a pip-audit sweep: fastapi/starlette/python-dotenv/pytest
-# all carried known CVEs at the originally pinned versions.
+# REVENANT backend — RUNTIME only. Python 3.13.
+#
+# Test and audit tooling lives in requirements-dev.txt: a production image has
+# no business carrying a test runner, and pip-audit's pins conflict with
+# pytest's, which broke the Docker build.
+#
+# Versions pinned after a pip-audit sweep — fastapi, starlette, python-dotenv
+# and pytest all carried known CVEs at their original pins.
 fastapi==0.141.1
 starlette==1.6.0
 uvicorn[standard]==0.52.4
@@ -12,16 +17,11 @@ httpx==0.28.1
 
 # Razorpay test-mode integration
 razorpay==2.0.1
-# razorpay 2.0.1 still imports pkg_resources at runtime, which is not present
-# by default on Python 3.12+. Declared explicitly so installs are deterministic.
+# razorpay 2.0.1 still imports pkg_resources at runtime, absent by default on
+# Python 3.12+. Declared so installs are deterministic rather than lucky.
 setuptools>=75.0.0
 
-# Agents (decision D4 revised: Gemini free tier, Anthropic selectable)
+# Agents (D4 revised: Gemini free tier, Anthropic selectable)
 langgraph==1.2.11
 langchain-google-genai==4.3.6
 langchain-anthropic==1.6.1
-
-# Dev / test
-pytest==9.1.1
-pytest-asyncio==0.25.2
-pip-audit>=2.7.0
