@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 
 from pydantic import BaseModel, ValidationError
 
@@ -66,9 +67,9 @@ DEFAULT_MODELS = {
 #: fails differently is not a fallback.
 FALLBACK_MODELS = {
     "google": [
+        "gemini-3.6-flash",
         "gemini-3.5-flash",
         "gemini-3.7-flash",
-        "gemini-3.6-flash",
         "gemini-2.5-flash",
     ],
     "anthropic": ["claude-sonnet-5", "claude-haiku-4-5-20251001"],
@@ -84,6 +85,16 @@ MAX_RATELIMIT_RETRIES = 5
 #: An earlier version capped at 8s while the API was asking for 29s, and the
 #: run died with the answer sitting in the error message.
 MAX_BACKOFF_SECONDS = 75.0
+
+#: Total wall-clock budget for one agent call, across every retry, schema
+#: correction and model fallback.
+#:
+#: Without this the per-attempt waits compound: 5 rate-limit retries at up to
+#: 75s, times 3 schema attempts, times 4 models in the chain, is over an hour
+#: of patient waiting for an answer that is not coming. A run was observed
+#: burning 21 minutes and producing nothing while a WORKING model sat third in
+#: the chain — the budget forces the fallback to happen instead of the wait.
+AGENT_DEADLINE_SECONDS = 150.0
 
 
 class LLMUnavailable(RuntimeError):

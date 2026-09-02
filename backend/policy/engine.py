@@ -41,6 +41,19 @@ class ActionType(str, Enum):
     CREATE_PAYMENT_LINK = "CREATE_PAYMENT_LINK"
     SEND_RECOVERY_NOTIFICATION = "SEND_RECOVERY_NOTIFICATION"
 
+    @property
+    def phrase(self) -> str:
+        """How this reads to a merchant.
+
+        `reason` is shown on screen, so it must not carry the enum name — a
+        database value in a sentence is the clearest sign nobody wrote the
+        sentence. The enum stays on the wire; only prose is translated.
+        """
+        return {
+            "CREATE_PAYMENT_LINK": "Sending a payment link",
+            "SEND_RECOVERY_NOTIFICATION": "Sending a reminder",
+        }[self.value]
+
 
 #: Actions that move money. These are subject to amount and daily-cap rules.
 FINANCIAL_ACTIONS = frozenset({ActionType.CREATE_PAYMENT_LINK})
@@ -385,9 +398,9 @@ def evaluate(
     return decide(
         Decision.AUTO_APPROVED,
         "within_policy",
-        f"{action.action.value} for {_rupees(action.amount_minor)} is within all "
-        "policy limits."
+        f"{action.action.phrase} for {_rupees(action.amount_minor)} is within "
+        "all policy limits."
         if is_financial
-        else f"{action.action.value} is non-financial and within policy.",
+        else f"{action.action.phrase} moves no money and is within policy.",
         amount_minor=action.amount_minor,
     )

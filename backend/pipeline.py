@@ -46,8 +46,13 @@ from .recovery.repository import persist_plan
 
 log = logging.getLogger(__name__)
 
-#: Gap between money-moving calls. Razorpay test mode throttles bursts.
-RAZORPAY_PACING_SECONDS = 2.5
+#: Gap between money-moving calls.
+#:
+#: Razorpay test mode throttles bursts hard: a 24-action batch at 2.5s had all
+#: 20 remaining calls rejected with 429. They landed safely in `pending` rather
+#: than failing, but a batch that needs rescuing afterwards is not a batch that
+#: worked. 6s costs ~2.5 minutes for a full run and does not trip the limit.
+RAZORPAY_PACING_SECONDS = 6.0
 
 
 @dataclass

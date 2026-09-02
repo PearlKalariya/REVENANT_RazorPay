@@ -20,6 +20,7 @@ Three properties this file is responsible for:
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -35,6 +36,8 @@ from ..policy import (
     RecoveryContext,
     evaluate,
 )
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -65,6 +68,9 @@ class RecoveryCandidate:
 @dataclass
 class RecoveryPlan:
     candidates: list[RecoveryCandidate]
+    #: True when the agent judged this incident not worth recovering at all.
+    declined: bool = False
+    decline_reason: str = ""
 
     @property
     def auto(self) -> list[RecoveryCandidate]:
@@ -140,6 +146,15 @@ async def build_plan(
         from ..policy import load_merchant_config
         config = (await load_merchant_config(conn, merchant_id)).policy
     now = now or datetime.now(timezone.utc)
+
+    # An explicit decline produces no candidates at all. The agent judging
+    # that these failures are not worth recovering is a real answer, and the
+    # planner must honour it rather than manufacturing work.
+    if getattr(strategy, "worth_recovering", True) is False:
+        log.info("plan.declined incident=%s reason=%s",
+                 incident_id, strategy.rationale[:120])
+        return RecoveryPlan(candidates=[], declined=True,
+                            decline_reason=strategy.rationale)
 
     try:
         action_type = ActionType(strategy.normalized_action)

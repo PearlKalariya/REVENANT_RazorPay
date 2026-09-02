@@ -182,20 +182,37 @@ def test_cannot_approve_an_action_not_awaiting_approval(client, key, restore_dec
 
 
 def test_approval_response_states_it_is_not_a_guarantee(client, key, restore_decisions):
-    """Approval AUTHORISES; policy is re-evaluated at execution and may still
-    refuse (D13). The response has to say so, or an approver will assume the
-    money moved."""
-    aid = _awaiting(client)
-    if aid is None:
-        pytest.skip("no action awaiting approval")
-    r = client.post(f"/recovery-actions/{aid}/approve",
-                    headers={"x-api-key": key},
-                    json={"approver": "test-human"})
-    if r.status_code == 200:
-        assert "re-evaluated" in r.json()["note"]
+    """Approving must never be reported as money having moved.
+
+    Asserts the CONTRACT, not the wording: if execution did not happen, the
+    response says so and explains why. An earlier version matched one exact
+    phrase and broke the moment approval began executing — a test that pins
+    prose fails on improvements instead of on regressions.
+    """
+    pending = client.get("/recovery-actions?status_filter=awaiting_approval").json()
+    if not pending["actions"]:
+        pytest.skip("nothing awaiting approval")
+    action_id = pending["actions"][0]["id"]
+
+    r = client.post(f"/recovery-actions/{action_id}/approve",
+                    headers={"x-api-key": key}, json={"approver": "auditor"})
+    assert r.status_code == 200
+    body = r.json()
+
+    assert body["approved"] is True
+    assert "executed" in body, "the response must say whether money actually moved"
+    assert body["note"], "every outcome needs an explanation"
+
+    if body["executed"]:
+        # A real movement names the artefact it created.
+        assert body.get("payment_link"), "an executed approval must return its link"
+    else:
+        # A refusal explains itself and never implies success.
+        assert "refused" in body["note"].lower() or "unavailable" in body["note"].lower() \
+            or "pending" in body["note"].lower()
+        assert "sent" not in body["note"].lower()
 
 
-# --- PII ------------------------------------------------------------------
 
 
 def test_email_and_phone_are_masked():

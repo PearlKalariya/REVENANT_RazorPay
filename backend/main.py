@@ -15,6 +15,7 @@ from . import db
 from .agents.llm import resolve_model_name
 from .config import get_settings
 from .routes_api import router as api_router
+from .routes_lab import router as lab_router
 from .routes_webhooks import router as webhooks_router
 
 
@@ -51,6 +52,8 @@ app.add_middleware(
 )
 
 app.include_router(webhooks_router)
+# Safe to expose: real policy, zero side effects (see routes_lab).
+app.include_router(lab_router)
 app.include_router(api_router)
 
 

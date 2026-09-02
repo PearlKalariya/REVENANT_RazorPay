@@ -338,3 +338,21 @@ def test_each_model_gets_its_own_retry_budget():
     src = inspect.getsource(llm._invoke_with_backoff)
     assert "for model_idx, model_name in enumerate(chain)" in src
     assert src.count("for ") >= 2, "fallback and retry must be separate loops"
+
+
+def test_agent_call_has_an_overall_deadline():
+    """Per-attempt backoff compounds without one.
+
+    5 rate-limit retries at up to 75s, times 3 schema attempts, times 4 models
+    is over an hour of waiting. A real run burned 21 minutes and produced
+    nothing while a working model sat third in the chain.
+    """
+    from backend.agents.llm import (
+        AGENT_DEADLINE_SECONDS, MAX_BACKOFF_SECONDS, MAX_RATELIMIT_RETRIES,
+    )
+
+    assert AGENT_DEADLINE_SECONDS > MAX_BACKOFF_SECONDS, (
+        "the budget must allow at least one full provider-requested wait")
+    worst_case_without_budget = MAX_BACKOFF_SECONDS * MAX_RATELIMIT_RETRIES
+    assert AGENT_DEADLINE_SECONDS < worst_case_without_budget, (
+        "the budget must actually cut the waiting short")

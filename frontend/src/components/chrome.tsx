@@ -6,6 +6,7 @@ const NAV = [
   { href: "/recovery", label: "Recovery" },
   { href: "/approvals", label: "Approvals" },
   { href: "/audit", label: "Audit" },
+  { href: "/lab", label: "Try it" },
 ];
 
 export function Header({ current }: { current: string }) {

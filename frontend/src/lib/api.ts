@@ -233,3 +233,63 @@ export const clockIST = (iso: string) =>
     hour: "2-digit", minute: "2-digit", second: "2-digit",
     hour12: false, timeZone: "Asia/Kolkata",
   });
+
+
+/* ── Failure Lab ───────────────────────────────────────────────────
+   Calls the real Policy Engine. Nothing here writes or moves money, so it
+   needs no key and is safe to leave open. */
+
+export type LabScenario = {
+  amount_minor?: number;
+  action?: string;
+  payment_status?: string;
+  customer_opted_out?: boolean;
+  prior_attempts?: number;
+  minutes_since_last_attempt?: number | null;
+  already_recovered_today_minor?: number;
+  minutes_since_proposed?: number;
+};
+
+export type LabPreset = {
+  id: string;
+  label: string;
+  expect: string;
+  why: string;
+  scenario: LabScenario;
+};
+
+export type LabLimits = {
+  currency: string;
+  limits: {
+    auto_limit_minor: number; auto_limit: string;
+    daily_cap_minor: number; daily_cap: string;
+    max_retry_attempts: number; retry_cooldown_minutes: number;
+    action_ttl_minutes: number; timezone: string; policy_version: string;
+  };
+  presets: LabPreset[];
+  note: string;
+};
+
+export type LabVerdict = {
+  decision: "AUTO_APPROVED" | "REQUIRES_APPROVAL" | "BLOCKED";
+  rule: string;
+  reason: string;
+  policy_version: string;
+  policy_hash: string;
+  currency: string;
+  amount: string;
+  would_move_money: boolean;
+  note: string;
+};
+
+export const getLab = () => get<LabLimits>("/lab/scenarios");
+
+export async function evaluateScenario(scenario: LabScenario): Promise<LabVerdict> {
+  const res = await fetch(`${BASE}/lab/evaluate`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(scenario),
+  });
+  if (!res.ok) throw new ApiError("Evaluation failed", res.status);
+  return res.json();
+}

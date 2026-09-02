@@ -39,8 +39,32 @@ SPIKE_END_HOUR = 17
 SPIKE_UPI_FAILURE_RATE = 0.70
 BASELINE_FAILURE_RATE = 0.045
 
+# A SECOND cluster that looks like the first and is not.
+#
+# Card failures surge in this window, so detection fires on it exactly as it
+# does for UPI. But every reason is STRUCTURAL — the issuer declined, the funds
+# were not there, the card is expired. A payment link sent to any of these
+# customers fails again for the same reason and irritates somebody who already
+# knows they could not pay.
+#
+# The correct answer for this incident is: do not recover it. A GROUP BY cannot
+# tell the two spikes apart — both are "a payment method failing a lot in a
+# window". Telling them apart needs the failure reasons read and understood,
+# which is the whole justification for putting an agent here at all.
+DECOY_START_HOUR = 9
+DECOY_END_HOUR = 13
+DECOY_CARD_FAILURE_RATE = 0.78
+
 METHODS = ["upi", "card", "netbanking"]
 METHOD_WEIGHTS = [0.45, 0.32, 0.23]
+
+#: Structural — the customer cannot pay right now, so retrying is pointless.
+STRUCTURAL_CARD_REASONS = [
+    ("BAD_REQUEST_ERROR", "Insufficient funds"),
+    ("BAD_REQUEST_ERROR", "Card declined by issuing bank"),
+    ("BAD_REQUEST_ERROR", "Card expired"),
+    ("BAD_REQUEST_ERROR", "Transaction not permitted on this card"),
+]
 
 FAILURE_REASONS = {
     "upi": [
@@ -93,6 +117,7 @@ def build_dataset() -> tuple[list, list, dict]:
         "captured": 0,
         "at_risk_minor": 0,
         "spike_upi_failed": 0,
+        "decoy_card_failed": 0,
     }
 
     for i in range(N_PAYMENTS):
@@ -104,18 +129,33 @@ def build_dataset() -> tuple[list, list, dict]:
         in_spike = (
             method == "upi" and SPIKE_START_HOUR <= created.hour < SPIKE_END_HOUR
         )
-        fail_rate = SPIKE_UPI_FAILURE_RATE if in_spike else BASELINE_FAILURE_RATE
+        in_decoy = (
+            method == "card" and DECOY_START_HOUR <= created.hour < DECOY_END_HOUR
+        )
+        if in_spike:
+            fail_rate = SPIKE_UPI_FAILURE_RATE
+        elif in_decoy:
+            fail_rate = DECOY_CARD_FAILURE_RATE
+        else:
+            fail_rate = BASELINE_FAILURE_RATE
         failed = rng.random() < fail_rate
         amount = _amount_minor(rng)
 
         code = reason = None
         if failed:
             status = "failed"
-            code, reason = rng.choice(FAILURE_REASONS[method])
+            # Inside the decoy window the reason is always structural — that is
+            # what makes this cluster unrecoverable rather than unlucky.
+            code, reason = (
+                rng.choice(STRUCTURAL_CARD_REASONS) if in_decoy
+                else rng.choice(FAILURE_REASONS[method])
+            )
             stats["failed"] += 1
             stats["at_risk_minor"] += amount
             if in_spike:
                 stats["spike_upi_failed"] += 1
+            if in_decoy:
+                stats["decoy_card_failed"] += 1
         else:
             status = "captured"
             stats["captured"] += 1
@@ -210,5 +250,7 @@ if __name__ == "__main__":
     print(f"  failed            : {result['failed']}")
     print(f"  revenue at risk   : {_rupees(result['at_risk_minor'])}")
     print(f"  UPI spike failures: {result['spike_upi_failed']}"
-          f" (window {SPIKE_START_HOUR}:00-{SPIKE_END_HOUR}:00 UTC)")
+          f" (window {SPIKE_START_HOUR}:00-{SPIKE_END_HOUR}:00 UTC) — RECOVERABLE")
+    print(f"  card decline spike: {result['decoy_card_failed']}"
+          f" (window {DECOY_START_HOUR}:00-{DECOY_END_HOUR}:00 UTC) — STRUCTURAL")
     print("=" * 58)

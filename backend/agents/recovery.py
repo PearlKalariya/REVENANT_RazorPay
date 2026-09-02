@@ -65,13 +65,19 @@ How to think about it:
 - Transient failures (timeouts, expired collect requests, gateway outages) are \
 worth recovering. The customer intended to pay and the infrastructure failed \
 them.
-- Structural failures (insufficient funds, card declined, international card \
-not supported) will usually fail again for the same reason. Recovering these \
-wastes effort and irritates customers. Exclude them unless you have a specific \
-reason.
-- Do not propose recovery for every failure just to maximise the number. A \
-focused strategy that recovers the recoverable beats a broad one that annoys \
-customers who cannot pay.
+- Structural failures (insufficient funds, card declined by the issuer, expired \
+or closed cards, international card not supported) will fail again for the same \
+reason. A payment link sent to somebody whose card was declined for lack of \
+funds wastes effort and irritates a customer who already knows.
+- **Declining is a real answer.** If the failures in this incident are \
+predominantly structural, set worth_recovering to false and say why. Do not \
+manufacture a strategy to look useful. An incident where the right action is \
+"do nothing" is a correct outcome, and reporting it honestly is worth more to \
+the merchant than a doomed recovery attempt.
+- Look at the ACTUAL failure reasons before deciding. Do not assume a spike \
+means recoverable: a surge of declines from one issuing bank is not the same \
+problem as a gateway outage, and the two need opposite responses.
+- Do not propose recovery for every failure just to maximise the number.
 
 Use the tools to ground your reasoning. Check the merchant baseline and the \
 actual failure reasons before deciding. Never invent figures.
@@ -88,8 +94,17 @@ class RecoveryStrategy(BaseModel):
     able to specify who gets charged what. Those come from the database.
     """
 
+    worth_recovering: bool = Field(
+        description="False when these failures should NOT be recovered at all — "
+        "structural declines (insufficient funds, closed or expired cards, a "
+        "bank refusing the transaction) that will fail again for the same "
+        "reason. Declining is a real answer and often the correct one: a "
+        "payment link sent to somebody whose card was declined for lack of "
+        "funds wastes effort and irritates a customer who already knows.",
+    )
     action_type: str = Field(
-        description="CREATE_PAYMENT_LINK or SEND_RECOVERY_NOTIFICATION."
+        description="CREATE_PAYMENT_LINK or SEND_RECOVERY_NOTIFICATION. "
+        "Ignored when worth_recovering is false."
     )
     target_failure_reasons: list[str] = Field(
         default_factory=list,
