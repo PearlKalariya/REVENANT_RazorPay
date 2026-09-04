@@ -24,13 +24,13 @@ flowchart TD
 
     subgraph Propose["3 · PROPOSE — backend/agents/recovery.py"]
         E --> F[Recovery Agent]
-        F --> G{worth_recovering?}
+        F --> G{"worth_recovering?"}
         G -->|No| H[Declines. No action proposed.<br/>Recorded as a real decision.]
         G -->|Yes| I[RecoveryStrategy:<br/>action + amount + rationale]
     end
 
     subgraph Gate1["4 · AUTHORIZE — backend/policy/engine.py"]
-        I --> J[evaluate&#40;phase=AUTHORIZATION&#41;<br/>deterministic, not an LLM]
+        I --> J["evaluate - phase AUTHORIZATION<br/>deterministic, not an LLM"]
         J --> K[(policy_decisions<br/>phase=authorization<br/>+ SHA-256 policy_hash)]
         J -->|within limit| L[AUTO_APPROVED]
         J -->|over limit| M[REQUIRES_APPROVAL<br/>→ human in Approvals UI]
@@ -38,9 +38,9 @@ flowchart TD
     end
 
     subgraph Gate2["5 · RE-AUTHORIZE — backend/recovery/executor.py"]
-        L --> O[pg_advisory_xact_lock&#40;merchant&#41;]
+        L --> O["pg_advisory_xact_lock - per merchant"]
         M -->|human approves| O
-        O --> P[evaluate&#40;phase=EXECUTION&#41;<br/>SAME function, CURRENT state]
+        O --> P["evaluate - phase EXECUTION<br/>SAME function, CURRENT state"]
         P --> Q[(policy_decisions<br/>phase=execution<br/>+ its own policy_hash)]
         P -->|still permitted| R[Razorpay: create_payment_link<br/>idempotency_key = reference_id]
         P -->|no longer permitted| S[Refused — even if authorized<br/>earlier. Recorded, not silent.]
@@ -48,7 +48,7 @@ flowchart TD
 
     subgraph Verify["6 · VERIFY — backend/integrations/webhook.py<br/>+ backend/recovery/reconcile.py"]
         R --> T[Webhook: HMAC-SHA256 verified,<br/>replay-safe]
-        R --> U[Reconciliation poll:<br/>GET /payment_links/&#123;id&#125;<br/>catches webhooks that never arrive]
+        R --> U["Reconciliation poll:<br/>GET /payment_links/:id<br/>catches webhooks that never arrive"]
         T --> V[REVENUE_RECOVERED<br/>only from a verified source]
         U --> V
     end
