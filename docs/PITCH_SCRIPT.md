@@ -179,6 +179,15 @@ into the close, or drop it entirely. Protect these three beats no matter what
 2. **2:00–2:50** — the policy gate flipping live on the slider
 3. **2:50–3:40** — the reconciliation story
 
+## Architecture
+
+The buildathon form asks for architecture separately from the video. The
+written version — a diagram plus the reasoning behind the two-phase policy
+gate — is `docs/ARCHITECTURE.md`. The video doesn't need to repeat it: the
+spoken walkthrough at 0:25–2:00 already covers detect → investigate →
+propose → gate in plain language, which is enough on camera. Link the
+`ARCHITECTURE.md` file itself when the form asks for it.
+
 ## Before you record — checklist
 
 - [ ] Browser zoomed to 100%
