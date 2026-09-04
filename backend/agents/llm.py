@@ -79,6 +79,15 @@ FALLBACK_MODELS = {
 #: any visible output. Too small and they return nothing at all.
 MAX_OUTPUT_TOKENS = 8192
 
+#: Hard client-side timeout on a single HTTP call to the model.
+#:
+#: With NO timeout set, a hung read (observed: gemini-3.7-flash sat silent for
+#: 30s+ with no error) blocks inside one attempt, invisible to the deadline
+#: logic below — that logic only checks BETWEEN attempts, so a single stuck
+#: read can consume the whole per-model budget doing nothing. This is the
+#: actual fix; AGENT_DEADLINE_SECONDS is the backstop, not the guard.
+REQUEST_TIMEOUT_SECONDS = 25.0
+
 MAX_SCHEMA_RETRIES = 3
 MAX_RATELIMIT_RETRIES = 5
 #: Free-tier quotas are per-minute, so a usable ceiling has to exceed 60s.
@@ -130,16 +139,28 @@ def is_model_unavailable(exc: Exception) -> bool:
 
 
 def is_transient_server_error(exc: Exception) -> bool:
-    """Provider-side overload (503 UNAVAILABLE, 500). Not our fault and not a
-    quota problem — the model is simply busy.
+    """Provider-side trouble that is not our fault and not a quota problem:
+    the model is busy (503 UNAVAILABLE), erroring (500), or too slow to answer
+    within our own client timeout (504 DEADLINE_EXCEEDED).
+
+    That last one is the one that bit: REQUEST_TIMEOUT_SECONDS correctly cut a
+    hung call short, but the resulting 504 was unclassified, so it propagated
+    as an unhandled exception and killed the whole pipeline instead of falling
+    to the next model. A client timeout firing is success, not failure — it is
+    the guard working. It must be classified as retryable or the guard is
+    pointless.
 
     Worth a short retry, then a fallback: a demo should not die because one
-    model was momentarily oversubscribed.
+    model was momentarily oversubscribed or slow.
     """
     text = str(exc)
     return (
         "503" in text
+        or "504" in text
         or "UNAVAILABLE" in text
+        or "DEADLINE_EXCEEDED" in text
+        or isinstance(exc, TimeoutError)
+        or "timed out" in text.lower()
         or "high demand" in text.lower()
         or "overloaded" in text.lower()
         or "500 INTERNAL" in text
@@ -180,6 +201,7 @@ def build_model(settings: Settings, *, temperature: float = 0.0,
             # Investigation must be reproducible; sampling variety is not a
             # virtue when the output feeds a financial pipeline.
             max_retries=2,
+            timeout=REQUEST_TIMEOUT_SECONDS,
         )
 
     if settings.llm_provider == "anthropic":
@@ -190,6 +212,7 @@ def build_model(settings: Settings, *, temperature: float = 0.0,
             api_key=settings.anthropic_api_key,
             temperature=temperature,
             max_tokens=4096,
+            timeout=REQUEST_TIMEOUT_SECONDS,
         )
 
     raise LLMUnavailable(f"Unknown LLM_PROVIDER {settings.llm_provider!r}.")

@@ -61,9 +61,11 @@ merchant baseline — and proposes a recovery strategy. But it can't execute
 anything. It has six read-only tools. No method that touches money exists in
 its code anywhere. Here's the part I'm proudest of.
 
-> 🎬 Navigate to the SECOND incident on the page — the card-decline cluster,
-> not the UPI one. Scroll or click until "worth_recovering: false" or the
-> declined status is visible on screen. Point at it.
+> 🎬 A tab bar now sits under the header — three clickable incident tabs.
+> Click the **INCIDENT 02** tab (the card-decline one). Wait for it to load.
+> The header turns BLUE instead of red, and "WORTH RECOVERING" reads NO —
+> point at that. Then point at the yellow banner below the root cause: "The
+> agent judged this NOT worth recovering."
 
 This incident looks identical to the first one on any normal dashboard — a
 payment method failing way above baseline. But the agent read the actual

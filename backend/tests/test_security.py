@@ -356,3 +356,31 @@ def test_agent_call_has_an_overall_deadline():
     worst_case_without_budget = MAX_BACKOFF_SECONDS * MAX_RATELIMIT_RETRIES
     assert AGENT_DEADLINE_SECONDS < worst_case_without_budget, (
         "the budget must actually cut the waiting short")
+
+
+def test_llm_client_has_a_hard_timeout():
+    """A hung read with NO client timeout blocks inside one attempt, invisible
+    to the between-attempts deadline logic. Observed live: gemini-3.7-flash
+    sat silent 30s+ with no error while nothing else in the fallback chain
+    could run. The deadline is the backstop; this timeout is the actual guard.
+    """
+    from backend.agents.llm import REQUEST_TIMEOUT_SECONDS, AGENT_DEADLINE_SECONDS
+    assert REQUEST_TIMEOUT_SECONDS > 0
+    assert REQUEST_TIMEOUT_SECONDS < AGENT_DEADLINE_SECONDS, (
+        "a single call must be able to time out and still leave budget "
+        "for at least one more attempt within the per-model deadline")
+
+
+def test_client_timeout_is_classified_as_retryable():
+    """A 504 DEADLINE_EXCEEDED is what OUR OWN client timeout produces when it
+    fires correctly. If it is unclassified it propagates as an unhandled
+    exception and kills the whole run — exactly what happened in production:
+    the 25s guard cut a hung call short, and the resulting 504 was not
+    recognised, so the pipeline crashed instead of falling to the next model.
+    A timeout firing is the guard working; it must count as retryable.
+    """
+    from backend.agents.llm import is_transient_server_error
+    assert is_transient_server_error(
+        Exception("504 DEADLINE_EXCEEDED. Deadline expired before operation "
+                  "could complete."))
+    assert is_transient_server_error(TimeoutError("The read operation timed out"))
