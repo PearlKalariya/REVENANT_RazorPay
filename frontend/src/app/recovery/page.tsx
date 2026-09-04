@@ -56,12 +56,19 @@ export default async function Recovery() {
               <span className="mono tnum text-[13px] font-bold">{a.amount}</span>
               <span className="mono tnum text-[12px]">{a.recovery_score?.toFixed(2) ?? "—"}</span>
               <span className="text-[12.5px]">{label(a.policy.rule)}</span>
-              <span className={`mono w-fit px-2 py-0.5 text-[10.5px] font-bold tracking-[.06em] ${STATUS_TONE[a.status] ?? "bg-paper-deep"}`}>
-                {label(a.status).toUpperCase()}
+              <span className={`mono w-fit px-2 py-0.5 text-[10.5px] font-bold tracking-[.06em] ${a.recovered ? "bg-recovered" : STATUS_TONE[a.status] ?? "bg-paper-deep"}`}>
+                {a.recovered ? "RECOVERED" : label(a.status).toUpperCase()}
               </span>
               {a.recovered ? (
-                <span className="mono tnum text-[12.5px] font-bold text-recovered">
-                  {moneyShort(a.recovered_minor)}
+                <span className="flex items-baseline gap-2">
+                  <span className="mono tnum text-[12.5px] font-bold text-recovered">
+                    {moneyShort(a.recovered_minor)}
+                  </span>
+                  {a.payment_link && (
+                    <a href={a.payment_link} target="_blank" rel="noreferrer" className="mono text-[10.5px] underline text-ink/60">
+                      link
+                    </a>
+                  )}
                 </span>
               ) : a.payment_link ? (
                 <a href={a.payment_link} target="_blank" rel="noreferrer" className="mono text-[11px] underline">

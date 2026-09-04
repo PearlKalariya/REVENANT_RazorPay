@@ -2,9 +2,9 @@ import Link from "next/link";
 import { Header, DataNote, SectionRule } from "@/components/chrome";
 import { AuditTicker } from "@/components/ticker";
 import {
-  getMetrics, getIncidents, getActions,
+  getMetrics, getIncidents, getIncidentDetail, getActions,
   label, money, moneyShort,
-  type Metrics, type Incident, type RecoveryAction,
+  type Metrics, type Incident, type IncidentDetail, type RecoveryAction,
 } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
@@ -12,6 +12,7 @@ export const dynamic = "force-dynamic";
 export default async function Dashboard() {
   let metrics: Metrics | null = null;
   let incident: Incident | null = null;
+  let incidentDetail: IncidentDetail | null = null;
   let awaiting: RecoveryAction[] = [];
   let incidentCount = 0;
 
@@ -23,6 +24,9 @@ export default async function Dashboard() {
     incident = inc.incidents[0] ?? null;
     incidentCount = inc.incidents.length;
     awaiting = act.actions;
+    if (incident) {
+      incidentDetail = await getIncidentDetail(incident.id).catch(() => null);
+    }
   } catch {
     return <Offline />;
   }
@@ -139,12 +143,14 @@ export default async function Dashboard() {
                 </p>
               </div>
 
-              <div className="grid grid-cols-4 gap-[13px]">
-                <Stat value="83.3%" caption="OBSERVED" className="bg-risk" />
-                <Stat value="2.0%" caption="BASELINE" className="bg-paper" />
-                <Stat value="41.3×" caption="SEVERITY" className="bg-judgement text-paper" />
-                <Stat value={String(incident.affected_count)} caption="AFFECTED" className="bg-machine text-paper" />
-              </div>
+              {incidentDetail?.detection && (
+                <div className="grid grid-cols-4 gap-[13px]">
+                  <Stat value={`${(incidentDetail.detection.observed_failure_rate * 100).toFixed(1)}%`} caption="OBSERVED" className="bg-risk" />
+                  <Stat value={`${(incidentDetail.detection.baseline_failure_rate * 100).toFixed(1)}%`} caption="BASELINE" className="bg-paper" />
+                  <Stat value={`${incidentDetail.detection.severity_multiple.toFixed(1)}×`} caption="SEVERITY" className="bg-judgement text-paper" />
+                  <Stat value={String(incident.affected_count)} caption="AFFECTED" className="bg-machine text-paper" />
+                </div>
+              )}
             </>
           ) : (
             <p className="text-[15px] text-ink/60">No open incidents. Nothing at risk right now.</p>
@@ -159,7 +165,7 @@ export default async function Dashboard() {
             </div>
             {Object.keys(metrics.policy_blocks).length > 0 && (
               <p className="mono mt-3 text-[11px] text-ink/55">
-                Blocked because:{" "}
+                Blocked across every policy check so far:{" "}
                 {Object.entries(metrics.policy_blocks)
                   .map(([rule, n]) => `${label(rule).toLowerCase()} (${n})`)
                   .join(" · ")}
