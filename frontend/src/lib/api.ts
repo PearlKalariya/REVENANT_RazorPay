@@ -91,6 +91,13 @@ export type AuditEvent = {
 };
 
 export type IncidentDetail = Incident & {
+  detection: {
+    method?: string;
+    observed_failure_rate: number;
+    baseline_failure_rate: number;
+    severity_multiple: number;
+    top_failure_reason?: string;
+  } | null;
   investigation: {
     root_cause: string;
     confidence: number;

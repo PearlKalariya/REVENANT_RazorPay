@@ -124,6 +124,30 @@ export default async function Incidents({
             </div>
           )}
 
+          {detail?.detection && (
+            <div className="mt-6">
+              <SectionRule left="THE NUMBERS" />
+              <div className="grid grid-cols-4 gap-3">
+                <Stat
+                  v={`${(detail.detection.observed_failure_rate * 100).toFixed(1)}%`}
+                  k="OBSERVED"
+                  cls="bg-risk"
+                />
+                <Stat
+                  v={`${(detail.detection.baseline_failure_rate * 100).toFixed(1)}%`}
+                  k="BASELINE"
+                  cls="bg-paper"
+                />
+                <Stat
+                  v={`${detail.detection.severity_multiple.toFixed(1)}×`}
+                  k="SEVERITY"
+                  cls="bg-judgement text-paper"
+                />
+                <Stat v={String(selected.affected_count)} k="AFFECTED" cls="bg-machine text-paper" />
+              </div>
+            </div>
+          )}
+
           {inv?.evidence && inv.evidence.length > 0 && (
             <div className="mt-8">
               <SectionRule left="EVIDENCE" />
@@ -194,6 +218,17 @@ function Fig({ v, k }: { v: string; k: string }) {
     <div>
       <div className="disp tnum text-[clamp(20px,2.4vw,32px)] leading-none">{v}</div>
       <div className="mono mt-1.5 text-[10.5px] font-bold tracking-[.1em]">{k}</div>
+    </div>
+  );
+}
+
+/** The hard-bordered, hard-shadowed box used on the Dashboard for numbers
+ *  that need to pop — offset shadow, thick border, no soft edges. */
+function Stat({ v, k, cls }: { v: string; k: string; cls: string }) {
+  return (
+    <div className={`hard-sm border-[3px] border-ink px-4 py-3 ${cls}`}>
+      <div className="disp tnum text-[clamp(22px,2.6vw,34px)] leading-none">{v}</div>
+      <div className="mono mt-1.5 text-[10px] font-bold tracking-[.1em]">{k}</div>
     </div>
   );
 }

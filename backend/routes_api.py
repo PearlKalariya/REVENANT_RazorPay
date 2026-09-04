@@ -94,9 +94,22 @@ async def get_incident(incident_id: int):
              WHERE incident_id=$1 AND event_type='RECOVERY_STRATEGY_PROPOSED'
              ORDER BY id DESC LIMIT 1
             """, incident_id)
+        # The detector's own numbers — observed/baseline/severity — live on the
+        # REVENUE_INCIDENT_DETECTED event, a different row than the LLM's
+        # free-text evidence. These are what the boxed stat cards need: real
+        # per-incident figures, not the UPI incident's numbers hardcoded for
+        # every incident.
+        detection = await conn.fetchrow(
+            """
+            SELECT metadata FROM audit_events
+             WHERE incident_id=$1 AND event_type='REVENUE_INCIDENT_DETECTED'
+             ORDER BY id DESC LIMIT 1
+            """, incident_id)
 
     def as_dict(raw):
         return json.loads(raw) if isinstance(raw, str) else (raw or {})
+
+    det = as_dict(detection["metadata"]) if detection else {}
 
     return redact({
         "id": incident["id"],
@@ -106,6 +119,13 @@ async def get_incident(incident_id: int):
         "revenue_at_risk": _rupees(incident["revenue_at_risk_minor"]),
         "affected_count": incident["affected_count"],
         "detected_at": incident["detected_at"].isoformat(),
+        "detection": None if not det else {
+            "method": det.get("method"),
+            "observed_failure_rate": det.get("observed_failure_rate"),
+            "baseline_failure_rate": det.get("baseline_failure_rate"),
+            "severity_multiple": det.get("severity_multiple"),
+            "top_failure_reason": det.get("top_failure_reason"),
+        },
         "investigation": None if investigation is None else {
             "root_cause": investigation["root_cause"],
             "confidence": investigation["confidence"],
