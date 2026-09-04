@@ -90,8 +90,29 @@ export type AuditEvent = {
   error: string | null;
 };
 
+export type IncidentDetail = Incident & {
+  investigation: {
+    root_cause: string;
+    confidence: number;
+    model: string;
+    evidence?: string[];
+    is_transient?: boolean;
+    affected_method?: string;
+    dominant_failure_reason?: string;
+    recommended_focus?: string;
+    tool_calls?: number;
+  } | null;
+  strategy: {
+    rationale: string;
+    worth_recovering?: boolean;
+    expected_recovery_rate?: number;
+    action_type?: string;
+  } | null;
+};
+
 export const getMetrics = () => get<Metrics>("/metrics");
 export const getIncidents = () => get<{ incidents: Incident[] }>("/incidents");
+export const getIncidentDetail = (id: number) => get<IncidentDetail>(`/incidents/${id}`);
 export const getActions = (status?: string) =>
   get<{ actions: RecoveryAction[] }>(
     `/recovery-actions${status ? `?status_filter=${encodeURIComponent(status)}` : ""}`,
