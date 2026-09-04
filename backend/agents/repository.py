@@ -177,6 +177,12 @@ async def load_latest_strategy(conn: asyncpg.Connection, incident_id: int):
     meta = meta or {}
     return (
         RecoveryStrategy(
+            # `worth_recovering` was added to the schema after some stored
+            # strategies were written, so old rows have no such key. Absence
+            # must default to True (recover), never False (decline) — a
+            # missing field silently defaulting to "don't act" would make an
+            # old, perfectly good strategy look like a refusal it never made.
+            worth_recovering=meta.get("worth_recovering", True),
             action_type=meta.get("action_type", "CREATE_PAYMENT_LINK"),
             target_method=meta.get("target_method"),
             target_failure_reasons=meta.get("target_failure_reasons", []),

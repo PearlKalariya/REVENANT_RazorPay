@@ -4,7 +4,11 @@ import { getIncidents, getActions, label, moneyShort, type Incident, type Recove
 
 export const dynamic = "force-dynamic";
 
-export default async function Incidents() {
+export default async function Incidents({
+  searchParams,
+}: {
+  searchParams: Promise<{ id?: string }>;
+}) {
   let incidents: Incident[] = [];
   let actions: RecoveryAction[] = [];
   try {
@@ -20,7 +24,13 @@ export default async function Incidents() {
     );
   }
 
-  const incident = incidents[0];
+  // Defaults to the top incident; ?id=N picks a specific one — there is no
+  // in-page switcher yet, so a direct link is the only way to reach anything
+  // but the first row.
+  const { id } = await searchParams;
+  const incident =
+    (id ? incidents.find((inc) => String(inc.id) === id) : undefined) ??
+    incidents[0];
   const recovered = actions.filter((a) => a.recovered);
   const recoveredPaise = recovered.reduce((s, a) => s + a.recovered_minor, 0);
 

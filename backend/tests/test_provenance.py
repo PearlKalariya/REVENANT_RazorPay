@@ -209,3 +209,24 @@ def test_hash_is_stable_and_value_sensitive():
 def test_evaluation_phase_values():
     assert EvaluationPhase.AUTHORIZATION.value == "authorization"
     assert EvaluationPhase.EXECUTION.value == "execution"
+
+
+async def test_stale_strategy_metadata_defaults_worth_recovering_true(conn):
+    """worth_recovering was added after some strategies were already stored.
+    Absence must default to True (recover), never False — a missing field
+    silently defaulting to "don't act" would make a perfectly good old
+    strategy look like a refusal it never made.
+    """
+    import json as _json
+    from backend.agents.repository import load_latest_strategy
+
+    await conn.execute("INSERT INTO merchants(id,name) VALUES('m_p','P')")
+    inc = await conn.fetchval(
+        "INSERT INTO revenue_incidents(merchant_id,title) VALUES('m_p','t') RETURNING id")
+    await conn.execute(
+        """INSERT INTO audit_events(actor,event_type,incident_id,reason,metadata)
+           VALUES('RECOVERY_AGENT','RECOVERY_STRATEGY_PROPOSED',$1,'old strategy',$2)""",
+        inc, _json.dumps({"action_type": "CREATE_PAYMENT_LINK",
+                          "expected_recovery_rate": 0.6, "confidence": 0.9}))
+    strategy, model = await load_latest_strategy(conn, inc)
+    assert strategy.worth_recovering is True
